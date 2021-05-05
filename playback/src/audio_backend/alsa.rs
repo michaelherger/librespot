@@ -98,7 +98,8 @@ impl Sink for AlsaSink {
         Ok(())
     }
 
-    fn write(&mut self, data: &[i16]) -> io::Result<()> {
+    fn write(&mut self, packet: &AudioPacket) -> io::Result<()> {
+        let data = packet.samples();
         let pcm = self.0.as_mut().unwrap();
         let io = pcm.io_i16().unwrap();
 

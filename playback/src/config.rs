@@ -31,7 +31,7 @@ pub struct PlayerConfig {
     pub normalisation: bool,
     pub normalisation_pregain: f32,
     pub lms_connect_mode: bool,
-    pub pass_through: bool
+    pub passthrough: bool
 }
 
 impl Default for PlayerConfig {
@@ -41,7 +41,7 @@ impl Default for PlayerConfig {
             normalisation: false,
             normalisation_pregain: 0.0,
             lms_connect_mode: false,
-            pass_through: false
+            passthrough: false
         }
     }
 }

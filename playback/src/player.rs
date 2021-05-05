@@ -15,8 +15,8 @@ use config::{Bitrate, PlayerConfig};
 use librespot_core::session::Session;
 use librespot_core::spotify_id::SpotifyId;
 
-use audio::{AudioDecoder, AudioPacket, PassthroughDecoder, VorbisDecoder};
-use audio::{AudioDecrypt, AudioFile};
+use crate::audio::{AudioDecoder, AudioError, AudioPacket, PassthroughDecoder, VorbisDecoder};
+use crate::audio::{AudioDecrypt, AudioFile};
 use audio_backend::Sink;
 use metadata::{AudioItem, FileFormat};
 use mixer::AudioFilter;
@@ -208,7 +208,8 @@ impl Drop for Player {
     }
 }
 
-type Decoder = Box<AudioDecoder>;
+type Decoder = Box<dyn AudioDecoder + Send>;
+
 enum PlayerState {
     Stopped,
     Paused {
@@ -387,20 +388,20 @@ impl PlayerInternal {
     fn handle_packet(&mut self, packet: Option<AudioPacket>, normalisation_factor: f32) {
         match packet {
             Some(mut packet) => {
-                if packet.data().len() > 0 {
-                    if !self.config.pass_through {
+                if !packet.is_empty() {
+                    if let AudioPacket::Samples(ref mut data) = packet {
                         if let Some(ref editor) = self.audio_filter {
-                            editor.modify_stream(&mut packet.data_mut())
+                            editor.modify_stream(data)
                         };
 
                         if self.config.normalisation && normalisation_factor != 1.0 {
-                            for x in packet.data_mut().iter_mut() {
+                            for x in data.iter_mut() {
                                 *x = (*x as f32 * normalisation_factor) as i16;
                             }
                         }
                     }
 
-                    if let Err(err) = self.sink.write(&packet.data()) {
+                    if let Err(err) = self.sink.write(&packet) {
                         error!("Could not write audio: {}", err);
                         self.stop_sink();
 
@@ -640,10 +641,24 @@ impl PlayerInternal {
 
         let audio_file = Subfile::new(decrypted_file, 0xa7);
 
-        let mut decoder = if self.config.pass_through {
-            Box::new(PassthroughDecoder::new(audio_file).unwrap()) as Decoder
+        let result = if self.config.passthrough {
+            match PassthroughDecoder::new(audio_file) {
+                Ok(result) => Ok(Box::new(result) as Decoder),
+                Err(e) => Err(AudioError::PassthroughError(e)),
+            }
         } else {
-            Box::new(VorbisDecoder::new(audio_file).unwrap()) as Decoder
+            match VorbisDecoder::new(audio_file) {
+                Ok(result) => Ok(Box::new(result) as Decoder),
+                Err(e) => Err(AudioError::VorbisError(e)),
+            }
+        };
+
+       let mut decoder = match result {
+            Ok(decoder) => decoder,
+            Err(e) => {
+                error!("Unable to read audio file: {}", e);
+                return None;
+            }
         };
 
         if position != 0 {

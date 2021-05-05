@@ -2,6 +2,7 @@ use super::{Open, Sink};
 extern crate rodio;
 extern crate cpal;
 use std::{io, thread, time};
+use crate::audio::AudioPacket;
 use std::process::exit;
 
 pub struct RodioSink {
@@ -99,8 +100,8 @@ impl Sink for RodioSink {
         Ok(())
     }
 
-    fn write(&mut self, data: &[i16]) -> io::Result<()> {
-        let source = rodio::buffer::SamplesBuffer::new(2, 44100, data);
+    fn write(&mut self, packet: &AudioPacket) -> io::Result<()> {
+        let source = rodio::buffer::SamplesBuffer::new(2, 44100, packet.samples());
         self.rodio_sink.append(source);
 
         // Chunk sizes seem to be about 256 to 3000 ish items long.

@@ -1,5 +1,6 @@
 use super::{Open, Sink};
 use libc;
+use crate::audio::AudioPacket;
 use libpulse_sys::*;
 use std::ffi::CStr;
 use std::ffi::CString;
@@ -103,15 +104,15 @@ impl Sink for PulseAudioSink {
         Ok(())
     }
 
-    fn write(&mut self, data: &[i16]) -> io::Result<()> {
+    fn write(&mut self, packet: &AudioPacket) -> io::Result<()> {
         if self.s == null_mut() {
             Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "Not connected to pulseaudio",
             ))
         } else {
-            let ptr = data.as_ptr() as *const libc::c_void;
-            let len = data.len() as usize * mem::size_of::<i16>();
+            let ptr = packet.samples().as_ptr() as *const libc::c_void;
+            let len = packet.samples().len() as usize * mem::size_of::<i16>();
             assert!(len > 0);
             call_pulseaudio(
                 |err| unsafe { pa_simple_write(self.s, ptr, len, err) },

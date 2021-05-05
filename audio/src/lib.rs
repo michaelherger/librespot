@@ -3,12 +3,13 @@ extern crate futures;
 #[macro_use]
 extern crate log;
 
+extern crate aes_ctr;
 extern crate bit_set;
 extern crate byteorder;
+extern crate bytes;
 extern crate num_bigint;
 extern crate num_traits;
 extern crate tempfile;
-extern crate aes_ctr;
 
 extern crate librespot_core;
 
@@ -21,25 +22,43 @@ mod lewton_decoder;
 mod libvorbis_decoder;
 mod passthrough_decoder;
 
+//mod range_set;
+
 pub use decrypt::AudioDecrypt;
 pub use fetch::{AudioFile, AudioFileOpen};
-use std::error;
+
 use std::fmt;
 
-pub struct AudioPacket(Vec<i16>);
+pub enum AudioPacket {
+    Samples(Vec<i16>),
+    OggData(Vec<u8>),
+}
 
 impl AudioPacket {
-    pub fn data(&self) -> &[i16] {
-        &self.0
+    pub fn samples(&self) -> &[i16] {
+        match self {
+            AudioPacket::Samples(s) => s,
+            AudioPacket::OggData(_) => panic!("can't return OggData on samples"),
+        }
     }
 
-    pub fn data_mut(&mut self) -> &mut [i16] {
-        &mut self.0
+    pub fn oggdata(&self) -> &[u8] {
+        match self {
+            AudioPacket::Samples(_) => panic!("can't return samples on OggData"),
+            AudioPacket::OggData(d) => d,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            AudioPacket::Samples(s) => s.is_empty(),
+            AudioPacket::OggData(d) => d.is_empty(),
+        }
     }
 }
 
 #[cfg(not(any(feature = "with-tremor", feature = "with-vorbis")))]
-pub use lewton_decoder::{VorbisDecoder, VorbisError};
+pub use crate::lewton_decoder::{VorbisDecoder, VorbisError};
 #[cfg(any(feature = "with-tremor", feature = "with-vorbis"))]
 pub use libvorbis_decoder::{VorbisDecoder, VorbisError};
 pub use passthrough_decoder::{PassthroughDecoder, PassthroughError};
@@ -59,18 +78,15 @@ impl fmt::Display for AudioError {
     }
 }
 
-impl error::Error for AudioError {
-    fn description(&self) -> &str {
-        match self {
-            AudioError::PassthroughError(err) => err.description(),
-            AudioError::VorbisError(err) => err.description(),
-        }
+impl From<VorbisError> for AudioError {
+    fn from(err: VorbisError) -> AudioError {
+        AudioError::VorbisError(VorbisError::from(err))
     }
-    fn cause(&self) -> Option<&error::Error> {
-        match self {
-            AudioError::PassthroughError(err) => err.source(),
-            AudioError::VorbisError(err) => err.source(),
-        }
+}
+
+impl From<PassthroughError> for AudioError {
+    fn from(err: PassthroughError) -> AudioError {
+        AudioError::PassthroughError(PassthroughError::from(err))
     }
 }
 

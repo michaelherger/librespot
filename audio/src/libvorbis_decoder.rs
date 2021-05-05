@@ -18,30 +18,6 @@ where
     pub fn new(input: R) -> Result<VorbisDecoder<R>, VorbisError> {
         Ok(VorbisDecoder(vorbis::Decoder::new(input)?))
     }
-
-    #[cfg(not(feature = "with-tremor"))]
-    pub fn seek(&mut self, ms: i64) -> Result<(), VorbisError> {
-        self.0.time_seek(ms as f64 / 1000f64)?;
-        Ok(())
-    }
-
-    #[cfg(feature = "with-tremor")]
-    pub fn seek(&mut self, ms: i64) -> Result<(), VorbisError> {
-        self.0.time_seek(ms)?;
-        Ok(())
-    }
-
-    pub fn next_packet(&mut self) -> Result<Option<AudioPacket>, VorbisError> {
-        loop {
-            match self.0.packets().next() {
-                Some(Ok(packet)) => return Ok(Some(AudioPacket(packet.data))),
-                None => return Ok(None),
-
-                Some(Err(vorbis::VorbisError::Hole)) => (),
-                Some(Err(err)) => return Err(err.into()),
-            }
-        }
-    }
 }
 
 impl<R> AudioDecoder for VorbisDecoder<R>
@@ -63,7 +39,7 @@ where
     fn next_packet(&mut self) -> Result<Option<AudioPacket>, AudioError> {
         loop {
             match self.0.packets().next() {
-                Some(Ok(packet)) => return Ok(Some(AudioPacket(packet.data))),
+                Some(Ok(packet)) => return Ok(Some(AudioPacket::Samples(packet.data))),
                 None => return Ok(None),
 
                 Some(Err(vorbis::VorbisError::Hole)) => (),
@@ -76,12 +52,6 @@ where
 impl From<vorbis::VorbisError> for VorbisError {
     fn from(err: vorbis::VorbisError) -> VorbisError {
         VorbisError(err)
-    }
-}
-
-impl From<vorbis::VorbisError> for AudioError {
-    fn from(err: vorbis::VorbisError) -> AudioError {
-        AudioError::VorbisError(VorbisError(err))
     }
 }
 
@@ -98,11 +68,13 @@ impl fmt::Display for VorbisError {
 }
 
 impl error::Error for VorbisError {
-    fn description(&self) -> &str {
-        error::Error::description(&self.0)
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        error::Error::source(&self.0)
     }
+}
 
-    fn cause(&self) -> Option<&error::Error> {
-        error::Error::cause(&self.0)
+impl From<vorbis::VorbisError> for AudioError {
+    fn from(err: vorbis::VorbisError) -> AudioError {
+        AudioError::VorbisError(VorbisError(err))
     }
 }

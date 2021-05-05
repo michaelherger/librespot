@@ -17,29 +17,6 @@ where
     pub fn new(input: R) -> Result<VorbisDecoder<R>, VorbisError> {
         Ok(VorbisDecoder(OggStreamReader::new(input)?))
     }
-
-    pub fn seek(&mut self, ms: i64) -> Result<(), VorbisError> {
-        let absgp = ms * 44100 / 1000;
-        self.0.seek_absgp_pg(absgp as u64)?;
-        Ok(())
-    }
-
-    pub fn next_packet(&mut self) -> Result<Option<AudioPacket>, VorbisError> {
-        use self::lewton::audio::AudioReadError::AudioIsHeader;
-        use self::lewton::OggReadError::NoCapturePatternFound;
-        use self::lewton::VorbisError::BadAudio;
-        use self::lewton::VorbisError::OggError;
-        loop {
-            match self.0.read_dec_packet_itl() {
-                Ok(Some(packet)) => return Ok(Some(AudioPacket(packet))),
-                Ok(None) => return Ok(None),
-
-                Err(BadAudio(AudioIsHeader)) => (),
-                Err(OggError(NoCapturePatternFound)) => (),
-                Err(err) => return Err(err.into()),
-            }
-        }
-    }
 }
 
 impl<R> AudioDecoder for VorbisDecoder<R>
@@ -48,8 +25,10 @@ where
 {
     fn seek(&mut self, ms: i64) -> Result<(), AudioError> {
         let absgp = ms * 44100 / 1000;
-        self.0.seek_absgp_pg(absgp as u64)?;
-        Ok(())
+        match self.0.seek_absgp_pg(absgp as u64) {
+            Ok(_) => return Ok(()),
+            Err(err) => return Err(AudioError::VorbisError(err.into())),
+        }
     }
 
     fn next_packet(&mut self) -> Result<Option<AudioPacket>, AudioError> {
@@ -59,12 +38,12 @@ where
         use self::lewton::VorbisError::OggError;
         loop {
             match self.0.read_dec_packet_itl() {
-                Ok(Some(packet)) => return Ok(Some(AudioPacket(packet))),
+                Ok(Some(packet)) => return Ok(Some(AudioPacket::Samples(packet))),
                 Ok(None) => return Ok(None),
 
                 Err(BadAudio(AudioIsHeader)) => (),
                 Err(OggError(NoCapturePatternFound)) => (),
-                Err(err) => return Err(err.into()),
+                Err(err) => return Err(AudioError::VorbisError(err.into())),
             }
         }
     }
@@ -73,12 +52,6 @@ where
 impl From<lewton::VorbisError> for VorbisError {
     fn from(err: lewton::VorbisError) -> VorbisError {
         VorbisError(err)
-    }
-}
-
-impl From<lewton::VorbisError> for AudioError {
-    fn from(err: lewton::VorbisError) -> AudioError {
-        AudioError::VorbisError(VorbisError(err))
     }
 }
 
@@ -95,10 +68,6 @@ impl fmt::Display for VorbisError {
 }
 
 impl error::Error for VorbisError {
-    fn description(&self) -> &str {
-        error::Error::description(&self.0)
-    }
-
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         error::Error::source(&self.0)
     }
