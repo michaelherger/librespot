@@ -1272,7 +1272,7 @@ impl SpircTask {
     }
 
     fn set_volume(&mut self, volume: u16) {
-        self.device.set_volume(volume as u32);
+        self.player.set_volume(volume as u32); 
         self.mixer
             .set_volume(volume_to_mixer(volume, &self.config.volume_ctrl));
         if let Some(cache) = self.session.cache() {

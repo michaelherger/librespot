@@ -82,6 +82,7 @@ enum PlayerCommand {
     Pause,
     Stop,
     Seek(u32),
+    Volume(u32),
     AddEventSender(mpsc::UnboundedSender<PlayerEvent>),
     SetSinkEventCallback(Option<SinkEventCallback>),
     EmitVolumeSetEvent(u16),
@@ -93,6 +94,12 @@ pub enum PlayerEvent {
     Stopped {
         play_request_id: u64,
         track_id: SpotifyId,
+    },
+    Volume {
+        volume: u32
+    },
+    Seek {
+        position: u32
     },
     // The player started working on playback of a track while it was in a stopped state.
     // This is always immediately followed up by a "Loading" or "Playing" event.
@@ -189,6 +196,8 @@ impl PlayerEvent {
             | Stopped {
                 play_request_id, ..
             } => Some(*play_request_id),
+            //I'm not sure of that...
+            Volume { .. } | Seek { .. } => None, 
             Changed { .. } | Preloading { .. } | VolumeSet { .. } => None,
         }
     }
@@ -364,6 +373,10 @@ impl Player {
 
     pub fn seek(&self, position_ms: u32) {
         self.command(PlayerCommand::Seek(position_ms));
+    }
+    
+    pub fn set_volume(&self, volume: u32) {
+        self.command(PlayerCommand::Volume(volume));
     }
 
     pub fn get_player_event_channel(&self) -> PlayerEventChannel {
@@ -1706,6 +1719,20 @@ impl PlayerInternal {
             });
         }
     }
+    
+    fn handle_command_volume(&mut self, mut volume: u32) {
+        if volume > 0 {
+            volume = volume * 100 / std::u16::MAX as u32;
+        } else {
+            volume = 0;
+        }
+
+        if volume > 100 {
+            volume = 100;
+        };
+
+        self.send_event(PlayerEvent::Volume { volume });
+    }
 
     fn handle_command(&mut self, cmd: PlayerCommand) {
         debug!("command={:?}", cmd);
@@ -1720,6 +1747,8 @@ impl PlayerInternal {
             PlayerCommand::Preload { track_id } => self.handle_command_preload(track_id),
 
             PlayerCommand::Seek(position_ms) => self.handle_command_seek(position_ms),
+            
+            PlayerCommand::Volume(volume) => self.handle_command_volume(volume),
 
             PlayerCommand::Play => self.handle_play(),
 
@@ -1832,6 +1861,7 @@ impl ::std::fmt::Debug for PlayerCommand {
             PlayerCommand::Pause => f.debug_tuple("Pause").finish(),
             PlayerCommand::Stop => f.debug_tuple("Stop").finish(),
             PlayerCommand::Seek(position) => f.debug_tuple("Seek").field(&position).finish(),
+            PlayerCommand::Volume(volume) => f.debug_tuple("Volume").field(&volume).finish(),           
             PlayerCommand::AddEventSender(_) => f.debug_tuple("AddEventSender").finish(),
             PlayerCommand::SetSinkEventCallback(_) => {
                 f.debug_tuple("SetSinkEventCallback").finish()
