@@ -1,3 +1,5 @@
+#[macro_use] extern crate serde_json;
+
 use futures_util::{future, FutureExt, StreamExt};
 use librespot_playback::player::PlayerEvent;
 use log::{error, info, warn};
@@ -19,10 +21,9 @@ use librespot::playback::config::{
 use librespot::playback::mixer::{self, Mixer, MixerConfig};
 use librespot::playback::player::{NormalisationData, Player};
 
-mod player_event_handler;
-use player_event_handler::{emit_sink_event, run_program_on_events};
+mod spotty;
+use spotty::{LMS};
 
-use std::convert::TryFrom;
 use std::path::Path;
 use std::process::exit;
 use std::str::FromStr;
@@ -34,15 +35,25 @@ use std::{
 
 const MILLIS: f32 = 1000.0;
 
+const VERSION: &'static str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
+
+#[cfg(target_os="windows")]
+const NULLDEVICE: &'static str = "NUL";
+#[cfg(not(target_os="windows"))]
+const NULLDEVICE: &'static str = "/dev/null";
+
 fn device_id(name: &str) -> String {
     hex::encode(Sha1::digest(name.as_bytes()))
 }
 
 fn usage(program: &str, opts: &getopts::Options) -> String {
+    println!("{}", VERSION.to_string());
+
     let brief = format!("Usage: {} [options]", program);
     opts.usage(&brief)
 }
 
+#[cfg(debug_assertions)]
 fn setup_logging(verbose: bool) {
     let mut builder = env_logger::Builder::new();
     match env::var("RUST_LOG") {
@@ -185,8 +196,16 @@ struct Setup {
     credentials: Option<Credentials>,
     enable_discovery: bool,
     zeroconf_port: u16,
-    player_event_program: Option<String>,
-    emit_sink_events: bool,
+
+    // spotty
+    authenticate: bool,
+    single_track:  Option<String>,
+    start_position: u32,
+    client_id: Option<String>,
+    scopes: Option<String>,
+    get_token: bool,
+    save_token: Option<String>,
+    lms: LMS,
 }
 
 fn get_setup(args: &[String]) -> Setup {
@@ -206,7 +225,8 @@ fn get_setup(args: &[String]) -> Setup {
         "cache-size-limit",
         "Limits the size of the cache for audio files.",
         "CACHE_SIZE_LIMIT"
-    ).optflag("", "disable-audio-cache", "Disable caching of the audio data.")
+    ).optflag("", "disable-audio-cache", "(Only here fore compatibility with librespot - audio cache is disabled by default).")
+        .optflag("", "enable-audio-cache", "Enable caching of the audio data.")
         .optopt("n", "name", "Device name", "NAME")
         .optopt("", "device-type", "Displayed device type", "DEVICE_TYPE")
         .optopt(
@@ -215,13 +235,6 @@ fn get_setup(args: &[String]) -> Setup {
             "Bitrate (96, 160 or 320). Defaults to 160",
             "BITRATE",
         )
-        .optopt(
-            "",
-            "onevent",
-            "Run PROGRAM when playback is about to begin.",
-            "PROGRAM",
-        )
-        .optflag("", "emit-sink-events", "Run program set by --onevent before sink is opened and after it is closed.")
         .optflag("v", "verbose", "Enable verbose output")
         .optflag("V", "version", "Display librespot version string")
         .optopt("u", "username", "Username to sign in with", "USERNAME")
@@ -241,12 +254,12 @@ fn get_setup(args: &[String]) -> Setup {
             "Audio device to use. Use '?' to list options if using portaudio or alsa",
             "DEVICE",
         )
-        .optopt(
-            "",
-            "format",
-            "Output format (F32, S32, S24, S24_3 or S16). Defaults to S16",
-            "FORMAT",
-        )
+        // .optopt(
+        //     "",
+        //     "format",
+        //     "Output format (F32, S32, S24, S24_3 or S16). Defaults to S16",
+        //     "FORMAT",
+        // )
         .optopt("", "mixer", "Mixer to use (alsa or softvol)", "MIXER")
         .optopt(
             "m",
@@ -350,7 +363,73 @@ fn get_setup(args: &[String]) -> Setup {
             "",
             "passthrough",
             "Pass raw stream to output, only works for \"pipe\"."
-        );
+        )
+        // spotty
+        .optflag("a", "authenticate", "Authenticate given username and password. Make sure you define a cache folder to store credentials.")
+        .optopt(
+            "",
+            "single-track",
+            "Play a single track ID and exit.",
+            "ID"
+        )
+        .optopt(
+            "",
+            "start-position",
+            "Position (in seconds) where playback should be started. Only valid with the --single-track option.",
+            "STARTPOSITION"
+        )
+        .optflag(
+            "x",
+            "check",
+            "Run quick internal check"
+        )
+        .optopt(
+            "i",
+            "client-id",
+            "A Spotify client_id to be used to get the oauth token. Required with the --get-token request.",
+            "CLIENT_ID"
+        )
+        .optopt(
+            "",
+            "scope",
+            "The scopes you want to have access to with the oauth token.",
+            "SCOPE"
+        )
+        .optflag(
+            "t",
+            "get-token",
+            "Get oauth token to be used with the web API etc. and print it to the console."
+        )
+        .optopt(
+            "T",
+            "save-token",
+            "Get oauth token to be used with the web API etc. and store it in the given file.",
+            "TOKENFILE"
+        )
+        .optflag(
+            "",
+            "pass-through",
+            "Pass raw stream to output, only works for \"pipe\"."
+        )
+        .optopt(
+            "",
+            "lms",
+            "hostname and port of Logitech Media Server instance (eg. localhost:9000)",
+            "LMS"
+        )
+        .optopt(
+            "",
+            "lms-auth",
+            "Authentication data to access Logitech Media Server",
+            "LMSAUTH"
+        )
+        .optopt(
+            "",
+            "player-mac",
+            "MAC address of the Squeezebox to be controlled",
+            "MAC"
+        )
+        ;
 
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
@@ -365,8 +444,16 @@ fn get_setup(args: &[String]) -> Setup {
         exit(0);
     }
 
+    if matches.opt_present("check") {
+        spotty::check();
+    }
+
+
+    #[cfg(debug_assertions)]
+    {
     let verbose = matches.opt_present("verbose");
     setup_logging(verbose);
+    }
 
     info!(
         "librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id})",
@@ -384,11 +471,7 @@ fn get_setup(args: &[String]) -> Setup {
 
     let backend = audio_backend::find(backend_name).expect("Invalid backend");
 
-    let format = matches
-        .opt_str("format")
-        .as_ref()
-        .map(|format| AudioFormat::try_from(format).expect("Invalid output format"))
-        .unwrap_or_default();
+    let format = AudioFormat::default();
 
     let device = matches.opt_str("device");
     if device == Some("?".into()) {
@@ -416,7 +499,7 @@ fn get_setup(args: &[String]) -> Setup {
     let cache = {
         let audio_dir;
         let system_dir;
-        if matches.opt_present("disable-audio-cache") {
+        if !matches.opt_present("enable-audio-cache") {
             audio_dir = None;
             system_dir = matches
                 .opt_str("system-cache")
@@ -524,7 +607,7 @@ fn get_setup(args: &[String]) -> Setup {
         }
     };
 
-    let passthrough = matches.opt_present("passthrough");
+    let passthrough = matches.opt_present("passthrough") || matches.opt_present("pass-through");
 
     let player_config = {
         let bitrate = matches
@@ -609,6 +692,17 @@ fn get_setup(args: &[String]) -> Setup {
 
     let enable_discovery = !matches.opt_present("disable-discovery");
 
+    let authenticate = matches.opt_present("authenticate");
+    let start_position = matches.opt_str("start-position")
+        .unwrap_or("0".to_string())
+        .parse::<f32>().unwrap_or(0.0);
+
+    let save_token = matches.opt_str("save-token").unwrap_or("".to_string());
+    let client_id = matches.opt_str("client-id")
+        .unwrap_or(format!("{}", include_str!("client_id.txt")));
+
+    let lms = LMS::new(matches.opt_str("lms"), matches.opt_str("player-mac"), matches.opt_str("lms-auth"));
+
     Setup {
         format,
         backend,
@@ -622,8 +716,15 @@ fn get_setup(args: &[String]) -> Setup {
         zeroconf_port,
         mixer,
         mixer_config,
-        player_event_program: matches.opt_str("onevent"),
-        emit_sink_events: matches.opt_present("emit-sink-events"),
+        // spotty
+        authenticate,
+        single_track: matches.opt_str("single-track"),
+        start_position: (start_position * 1000.0) as u32,
+        get_token: matches.opt_present("get-token") || save_token.as_str().len() != 0,
+        save_token: if save_token.as_str().len() == 0 { None } else { Some(save_token) },
+        client_id: if client_id.as_str().len() == 0 { None } else { Some(client_id) },
+        scopes: matches.opt_str("scope"),
+        lms
     }
 }
 
@@ -666,6 +767,15 @@ async fn main() {
         );
     }
 
+    if let Some(ref track_id) = setup.single_track {
+        spotty::play_track(track_id.to_string(), setup.start_position, last_credentials, setup.player_config, setup.session_config).await;
+        exit(0);
+    }
+    else if setup.get_token {
+        spotty::get_token(setup.client_id, setup.scopes, setup.save_token, last_credentials, setup.session_config).await;
+        exit(0);
+    }
+
     loop {
         tokio::select! {
             credentials = async { discovery.as_mut().unwrap().next().await }, if discovery.is_some() => {
@@ -696,6 +806,11 @@ async fn main() {
             },
             session = &mut connecting, if !connecting.is_terminated() => match session {
                 Ok(session) => {
+                    // Spotty auth mode: exit after saving credentials
+                    if setup.authenticate {
+                        break;
+                    }
+
                     let mixer_config = setup.mixer_config.clone();
                     let mixer = (setup.mixer)(Some(mixer_config));
                     let player_config = setup.player_config.clone();
@@ -704,33 +819,33 @@ async fn main() {
                     let audio_filter = mixer.get_audio_filter();
                     let format = setup.format;
                     let backend = setup.backend;
-                    let device = setup.device.clone();
+                    let device = Some(NULLDEVICE.to_string());
                     let (player, event_channel) =
                         Player::new(player_config, session.clone(), audio_filter, move || {
                             (backend)(device, format)
                         });
 
-                    if setup.emit_sink_events {
-                        if let Some(player_event_program) = setup.player_event_program.clone() {
-                            player.set_sink_event_callback(Some(Box::new(move |sink_status| {
-                                match emit_sink_event(sink_status, &player_event_program) {
-                                    Ok(e) if e.success() => (),
-                                    Ok(e) => {
-                                        if let Some(code) = e.code() {
-                                            warn!("Sink event prog returned exit code {}", code);
-                                        } else {
-                                            warn!("Sink event prog returned failure");
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!("Emitting sink event failed: {}", e);
-                                    }
-                                }
-                            })));
-                        }
-                    };
+                    // if setup.emit_sink_events {
+                    //     if let Some(player_event_program) = setup.player_event_program.clone() {
+                    //         player.set_sink_event_callback(Some(Box::new(move |sink_status| {
+                    //             match emit_sink_event(sink_status, &player_event_program) {
+                    //                 Ok(e) if e.success() => (),
+                    //                 Ok(e) => {
+                    //                     if let Some(code) = e.code() {
+                    //                         warn!("Sink event prog returned exit code {}", code);
+                    //                     } else {
+                    //                         warn!("Sink event prog returned failure");
+                    //                     }
+                    //                 }
+                    //                 Err(e) => {
+                    //                     warn!("Emitting sink event failed: {}", e);
+                    //                 }
+                    //             }
+                    //         })));
+                    //     }
+                    // };
 
-                    let (spirc_, spirc_task_) = Spirc::new(connect_config, session, player, mixer);
+                    let (spirc_, spirc_task_) = Spirc::new(connect_config, session, player, mixer, false);
 
                     spirc = Some(spirc_);
                     spirc_task = Some(Box::pin(spirc_task_));
@@ -766,24 +881,7 @@ async fn main() {
             },
             event = async { player_event_channel.as_mut().unwrap().recv().await }, if player_event_channel.is_some() => match event {
                 Some(event) => {
-                    if let Some(program) = &setup.player_event_program {
-                        if let Some(child) = run_program_on_events(event, program) {
-                            if child.is_ok() {
-
-                                let mut child = child.unwrap();
-
-                                tokio::spawn(async move {
-                                    match child.wait().await  {
-                                        Ok(status) if !status.success() => error!("child exited with status {:?}", status.code()),
-                                        Err(e) => error!("failed to wait on child process: {}", e),
-                                        _ => {}
-                                    }
-                                });
-                            } else {
-                                error!("program failed to start");
-                            }
-                        }
-                    }
+                    setup.lms.signal_event(event).await;
                 },
                 None => {
                     player_event_channel = None;

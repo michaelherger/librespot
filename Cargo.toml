@@ -1,11 +1,10 @@
 [package]
-name = "librespot"
-version = "0.2.0"
-authors = ["Librespot Org"]
+name = "spotty"
+version = "0.49.9"
+authors = ["Librespot Org", "Michael Herger <michael@herger.net>"]
 license = "MIT"
-description = "An open source client library for Spotify, with support for Spotify Connect"
 keywords = ["spotify"]
-repository = "https://github.com/librespot-org/librespot"
+repository = "https://github.com/michaelherger/librespot"
 readme = "README.md"
 edition = "2018"
 
@@ -16,7 +15,7 @@ name = "librespot"
 path = "src/lib.rs"
 
 [[bin]]
-name = "librespot"
+name = "spotty"
 path = "src/main.rs"
 doc = false
 
@@ -54,41 +53,21 @@ hex = "0.4"
 hyper = "0.14"
 log = "0.4"
 rpassword = "5.0"
+reqwest = "0.11.3"
+serde_json = "0.9.5"
 thiserror = "1.0"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "process"] }
 url = "2.1"
 sha-1 = "0.9"
 
 [features]
-alsa-backend = ["librespot-playback/alsa-backend"]
-portaudio-backend = ["librespot-playback/portaudio-backend"]
-pulseaudio-backend = ["librespot-playback/pulseaudio-backend"]
-jackaudio-backend = ["librespot-playback/jackaudio-backend"]
-rodio-backend = ["librespot-playback/rodio-backend"]
-rodiojack-backend = ["librespot-playback/rodiojack-backend"]
-sdl-backend = ["librespot-playback/sdl-backend"]
-gstreamer-backend = ["librespot-playback/gstreamer-backend"]
-
 with-tremor = ["librespot-audio/with-tremor"]
 with-vorbis = ["librespot-audio/with-vorbis"]
 
 with-dns-sd = ["librespot-connect/with-dns-sd"]
 
-default = ["rodio-backend"]
+#default = ["rodio-backend"]
 
-[package.metadata.deb]
-maintainer = "librespot-org"
-copyright = "2018 Paul Liétar"
-license-file = ["LICENSE", "4"]
-depends = "$auto"
-extended-description = """\
-librespot is an open source client library for Spotify. It enables applications \
-to use Spotify's service, without using the official but closed-source \
-libspotify. Additionally, it will provide extra features which are not \
-available in the official library."""
-section = "sound"
-priority = "optional"
-assets = [
-    ["target/release/librespot", "usr/bin/", "755"],
-    ["contrib/librespot.service", "lib/systemd/system/", "644"]
-]
+[profile.release]
+lto = true
+panic = 'abort'
