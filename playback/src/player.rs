@@ -1294,10 +1294,12 @@ impl PlayerInternal {
                     ..
                 } = self.state
                 {
-                    self.send_event(PlayerEvent::EndOfTrack {
-                        track_id,
-                        play_request_id,
-                    })
+                    if !self.config.lms_connect_mode {
+                        self.send_event(PlayerEvent::EndOfTrack {
+                            track_id,
+                            play_request_id,
+                        })
+                    }
                 } else {
                     unreachable!();
                 }

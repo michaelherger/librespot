@@ -47,7 +47,7 @@ fn device_id(name: &str) -> String {
 }
 
 fn usage(program: &str, opts: &getopts::Options) -> String {
-    println!("{}", VERSION.to_string());
+    print_version();
 
     let brief = format!("Usage: {} [options]", program);
     opts.usage(&brief)
@@ -67,9 +67,9 @@ fn setup_logging(verbose: bool) {
         }
         Err(_) => {
             if verbose {
-                builder.parse_filters("libmdns=info,librespot=trace");
+                builder.parse_filters("libmdns=info,librespot=trace,spotty=trace");
             } else {
-                builder.parse_filters("libmdns=info,librespot=info");
+                builder.parse_filters("libmdns=info,librespot=info,spotty=info");
             }
             builder.init();
         }
@@ -172,7 +172,8 @@ pub fn parse_file_size(input: &str) -> Result<u64, ParseFileSizeError> {
 
 fn print_version() {
     println!(
-        "librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id})",
+        "{spottyvers} - using librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id})",
+        spottyvers = VERSION,
         semver = version::SEMVER,
         sha = version::SHA_SHORT,
         build_date = version::BUILD_DATE,
@@ -456,7 +457,8 @@ fn get_setup(args: &[String]) -> Setup {
     }
 
     info!(
-        "librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id})",
+        "{spottyvers} - using librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id})",
+        spottyvers = VERSION,
         semver = version::SEMVER,
         sha = version::SHA_SHORT,
         build_date = version::BUILD_DATE,
@@ -665,6 +667,7 @@ fn get_setup(args: &[String]) -> Setup {
                 .map(|knee| knee.parse::<f32>().expect("Invalid knee float value"))
                 .unwrap_or(PlayerConfig::default().normalisation_knee),
             passthrough,
+            lms_connect_mode: !matches.opt_present("single-track"),
         }
     };
 
@@ -845,7 +848,7 @@ async fn main() {
                     //     }
                     // };
 
-                    let (spirc_, spirc_task_) = Spirc::new(connect_config, session, player, mixer, false);
+                    let (spirc_, spirc_task_) = Spirc::new(connect_config, session, player, mixer);
 
                     spirc = Some(spirc_);
                     spirc_task = Some(Box::pin(spirc_task_));

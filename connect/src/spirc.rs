@@ -84,7 +84,6 @@ pub enum SpircCommand {
 struct SpircTaskConfig {
     volume_ctrl: VolumeCtrl,
     autoplay: bool,
-    autonext: bool,
 }
 
 const CONTEXT_TRACKS_HISTORY: usize = 10;
@@ -255,7 +254,6 @@ impl Spirc {
         session: Session,
         player: Player,
         mixer: Box<dyn Mixer>,
-        autonext: bool,
     ) -> (Spirc, impl Future<Output = ()>) {
         debug!("new Spirc[{}]", session.session_id());
 
@@ -286,7 +284,6 @@ impl Spirc {
         let task_config = SpircTaskConfig {
             volume_ctrl: config.volume_ctrl.to_owned(),
             autoplay: config.autoplay,
-            autonext: autonext,
         };
 
         let device = initial_device_state(config);
@@ -1026,10 +1023,7 @@ impl SpircTask {
     }
 
     fn handle_end_of_track(&mut self) {
-        warn!("SPIRC END OF TRACK");
-        if self.config.autonext {
-            self.handle_next();
-        }
+        self.handle_next();
         self.notify(None, true);
     }
 

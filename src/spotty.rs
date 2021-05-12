@@ -1,4 +1,4 @@
-// use log::{info};
+use log::{info};
 use reqwest;
 
 use serde_json::json;
@@ -10,10 +10,11 @@ use librespot::core::config::SessionConfig;
 use librespot::core::keymaster;
 use librespot::core::session::Session;
 use librespot::core::spotify_id::SpotifyId;
+use librespot::core::version;
 
 use librespot::playback::audio_backend;
 use librespot::playback::config::{
-    AudioFormat, PlayerConfig,
+    AudioFormat, PlayerConfig
 };
 use librespot::playback::player::{
     Player, PlayerEvent
@@ -29,7 +30,14 @@ const DEBUGMODE: bool = true;
 const DEBUGMODE: bool = false;
 
 pub fn check() {
-    println!("ok {}", VERSION.to_string());
+    println!(
+        "ok {spottyvers} - using librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id})",
+        spottyvers = VERSION,
+        semver = version::SEMVER,
+        sha = version::SHA_SHORT,
+        build_date = version::BUILD_DATE,
+        build_id = version::BUILD_ID,
+    );
 
     let capabilities = json!({
         "version": env!("CARGO_PKG_VERSION").to_string(),
@@ -151,17 +159,17 @@ impl LMS {
                 new_track_id,
             } => {
                 #[cfg(debug_assertions)]
-                println!("change: spotify:track:{} -> spotify:track:{}", old_track_id.to_base62(), new_track_id.to_base62());
+                info!("change: spotify:track:{} -> spotify:track:{}", old_track_id.to_base62(), new_track_id.to_base62());
                 command = format!(r#"["spottyconnect","change","{}","{}"]"#, new_track_id.to_base62().to_string(), old_track_id.to_base62().to_string());
             }
             PlayerEvent::Started { track_id, .. } => {
                 #[cfg(debug_assertions)]
-                println!("play spotify:track:{}", track_id.to_base62());
+                info!("play spotify:track:{}", track_id.to_base62());
                 command = format!(r#"["spottyconnect","start","{}"]"#, track_id.to_base62().to_string());
             }
             PlayerEvent::Stopped { track_id, .. } => {
                 #[cfg(debug_assertions)]
-                println!("stop spotify:track:{}", track_id.to_base62());
+                info!("stop spotify:track:{}", track_id.to_base62());
                 command = r#"["spottyconnect","stop"]"#.to_string();
             }
             PlayerEvent::Playing {
@@ -174,7 +182,7 @@ impl LMS {
                 // env_vars.insert("TRACK_ID", track_id.to_base62());
                 // env_vars.insert("DURATION_MS", duration_ms.to_string());
                 // env_vars.insert("POSITION_MS", position_ms.to_string());
-                println!("event: playing, track: {}, duration: {}, position: {}", track_id.to_base62(), duration_ms, position_ms);
+                info!("event: playing, track: {}, duration: {}, position: {}", track_id.to_base62(), duration_ms, position_ms);
                 // we're not implementing the seek event here, as it's going to read player state anyway
                 // but signal a change if the new position has changed and is > 0
                 if position_ms <= 0 {
@@ -191,17 +199,17 @@ impl LMS {
                 // env_vars.insert("TRACK_ID", track_id.to_base62());
                 // env_vars.insert("DURATION_MS", duration_ms.to_string());
                 // env_vars.insert("POSITION_MS", position_ms.to_string());
-                println!("event: paused, track: {}, duration: {}, position: {}", track_id.to_base62(), duration_ms, position_ms);
-                return;
+                info!("event: paused, track: {}, duration: {}, position: {}", track_id.to_base62(), duration_ms, position_ms);
+                command = r#"["spottyconnect","stop"]"#.to_string();
             }
             PlayerEvent::Preloading { track_id, .. } => {
                 // env_vars.insert("PLAYER_EVENT", "preloading".to_string());
                 // env_vars.insert("TRACK_ID", track_id.to_base62());
-                println!("event: preloading, track: {}", track_id.to_base62());
+                info!("event: preloading, track: {}", track_id.to_base62());
                 return;
             }
             PlayerEvent::EndOfTrack { .. } => {
-                println!("END OF TRACK EVENT");
+                info!("END OF TRACK EVENT");
                 //spirc.as_mut().unwrap().next();
                 // spirc.as_mut().unwrap().pause();
                 return;
@@ -217,7 +225,7 @@ impl LMS {
                 };
 
                 #[cfg(debug_assertions)]
-                println!("volume {}", volume);
+                info!("volume {}", volume);
                 // we're not using the volume here, as LMS will read player state anyway
                 command = format!(r#"["spottyconnect","volume",{}]"#, new_volume.to_string());
             }
@@ -232,27 +240,27 @@ impl LMS {
 
         if let Some(ref base_url) = self.base_url {
             #[cfg(debug_assertions)]
-            println!("Base URL to talk to LMS: {}", base_url);
+            info!("Base URL to talk to LMS: {}", base_url);
 
             if let Some(ref player_mac) = self.player_mac {
                 #[cfg(debug_assertions)]
-                println!("Player MAC address to control: {}", player_mac);
+                info!("Player MAC address to control: {}", player_mac);
 
                 #[cfg(debug_assertions)]
-                println!("Command to send to player: {}", command);
+                info!("Command to send to player: {}", command);
 
                 let json = format!(r#"{{"id": 1,"method":"slim.request","params":["{}",{}]}}"#, player_mac, command);
 
+                // TODO - error handling. Currently crashes on any issue
                 let res = reqwest::Client::new()
                     .post(format!("{}", base_url))
                     .body(json)
                     .send()
-                    .await
-                    .expect("send");
+                    .await;
 
-                if res.status() != 200 {
-                    println!("Response {:?}", res);
-                }
+                // if res.status() != 200 {
+                //     println!("Response {:?}", res);
+                // }
             }
         }
     }
