@@ -1,6 +1,6 @@
 #[allow(unused)]
 use log::{info, warn};
-use reqwest;
+use hyper::{Body, Client, Method, Request};
 
 use serde_json::json;
 use std::fs;
@@ -245,16 +245,24 @@ impl LMS {
 
                 let json = format!(r#"{{"id": 1,"method":"slim.request","params":["{}",{}]}}"#, player_mac, command);
 
-                // TODO - error handling. Currently crashes on any issue
-                let res = reqwest::Client::new()
-                    .post(format!("{}", base_url))
-                    .body(json)
-                    .send()
-                    .await;
+                let req = Request::builder()
+                    .method(Method::POST)
+                    .uri(base_url.to_string())
+                    .header("content-type", "application/json")
+                    .body(Body::from(json.clone())).unwrap();
 
-                // if res.status() != 200 {
-                //     println!("Response {:?}", res);
-                // }
+                let client = Client::new();
+                let resp = client.request(req).await;
+
+                match resp {
+                    Ok(resp) => {
+                        println!("Response: {}", resp.status());
+                    }
+                    Err(error) => {
+                        warn!("Problem posting to {} / {}: {:?}", base_url, json, error);
+                        return;
+                    }
+                }
             }
         }
     }

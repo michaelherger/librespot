@@ -53,7 +53,6 @@ hex = "0.4"
 hyper = "0.14"
 log = "0.4"
 rpassword = "5.0"
-reqwest = { version = "0.11.3", default-features = false, features = [] }
 serde_json = "0.9.5"
 thiserror = "1.0"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "process"] }
