@@ -1279,8 +1279,8 @@ impl PlayerInternal {
                         }
                     }
 
-                    if let Err(err) = self.sink.write(&packet) {
-                        error!("Could not write audio: {}", err);
+                    if let Err(_err) = self.sink.write(&packet) {
+                        // error!("Could not write audio: {}", err);
                         self.ensure_sink_stopped(false);
                     }
                 }

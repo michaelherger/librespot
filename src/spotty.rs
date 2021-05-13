@@ -1,3 +1,4 @@
+#[allow(unused)]
 use log::{info, warn};
 use reqwest;
 
@@ -102,18 +103,26 @@ pub async fn play_track(track_id: String, start_position: u32, last_credentials:
             let track = SpotifyId::from_uri(
                 track_id.replace("spotty://", "spotify:track:")
                 .replace("://", ":")
-                .as_str()).unwrap();
+                .as_str());
 
-            let session = Session::connect(session_config, last_credentials, None)
-                .await
-                .unwrap();
+            match track {
+                Ok(track) => {
+                    let session = Session::connect(session_config, last_credentials, None)
+                        .await
+                        .unwrap();
 
-            let (mut player, _) = Player::new(player_config, session, None, move || {
-                backend(None, audio_format)
-            });
+                    let (mut player, _) = Player::new(player_config, session, None, move || {
+                        backend(None, audio_format)
+                    });
 
-            player.load(track, true, start_position);
-            player.await_end_of_track().await;
+                    player.load(track, true, start_position);
+                    player.await_end_of_track().await;
+                }
+                Err(error) => {
+                    warn!("Problem getting a Spotify ID for {}: {:?}", track_id, error);
+                    return;
+                }
+            };
         }
         None => {
             println!("Missing credentials");
