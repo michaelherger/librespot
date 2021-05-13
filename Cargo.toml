@@ -61,12 +61,7 @@ url = "2.1"
 sha-1 = "0.9"
 
 [features]
-with-tremor = ["librespot-audio/with-tremor"]
-with-vorbis = ["librespot-audio/with-vorbis"]
-
 with-dns-sd = ["librespot-connect/with-dns-sd"]
-
-#default = ["rodio-backend"]
 
 [profile.release]
 lto = true

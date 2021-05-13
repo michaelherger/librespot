@@ -1287,6 +1287,11 @@ impl PlayerInternal {
             }
 
             None => {
+                if self.config.lms_connect_mode {
+                    // info!("In LMS Connect mode - ignore end of track");
+                    return;
+                }
+
                 self.state.playing_to_end_of_track();
                 if let PlayerState::EndOfTrack {
                     track_id,
@@ -1294,12 +1299,10 @@ impl PlayerInternal {
                     ..
                 } = self.state
                 {
-                    if !self.config.lms_connect_mode {
-                        self.send_event(PlayerEvent::EndOfTrack {
-                            track_id,
-                            play_request_id,
-                        })
-                    }
+                    self.send_event(PlayerEvent::EndOfTrack {
+                        track_id,
+                        play_request_id,
+                    })
                 } else {
                     unreachable!();
                 }
