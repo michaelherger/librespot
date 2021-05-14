@@ -42,7 +42,8 @@ pub fn check() {
 
     let capabilities = json!({
         "version": env!("CARGO_PKG_VERSION").to_string(),
-        "lms-auth": false,
+        "autoplay": true,
+        "lms-auth": true,
         "volume-normalisation": true,
         "debug": DEBUGMODE,
         "ogg-direct": true,
@@ -245,10 +246,18 @@ impl LMS {
 
                 let json = format!(r#"{{"id": 1,"method":"slim.request","params":["{}",{}]}}"#, player_mac, command);
 
+                let mut auth_header = "".to_string();
+                if let Some(ref auth) = self.auth {
+                    auth_header = auth.trim().to_string();
+                }
+
                 let req = Request::builder()
                     .method(Method::POST)
                     .uri(base_url.to_string())
+                    .header("user-agent", format!("{}", VERSION))
                     .header("content-type", "application/json")
+                    .header("authorization", format!("Basic {}", auth_header))
+                    .header("x-scanner", "1")
                     .body(Body::from(json.clone())).unwrap();
 
                 let client = Client::new();
@@ -256,11 +265,11 @@ impl LMS {
 
                 match resp {
                     Ok(resp) => {
-                        println!("Response: {}", resp.status());
+                        #[cfg(debug_assertions)]
+                        info!("Response: {}", resp.status());
                     }
                     Err(error) => {
                         warn!("Problem posting to {} / {}: {:?}", base_url, json, error);
-                        return;
                     }
                 }
             }
