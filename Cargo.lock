@@ -2105,7 +2105,7 @@ dependencies = [
 
 [[package]]
 name = "spotty"
-version = "0.49.9"
+version = "1.0.0"
 dependencies = [
  "base64",
  "env_logger",

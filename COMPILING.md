@@ -23,8 +23,8 @@ rustup component add rustfmt
 Using `rustfmt` is not optional, as our CI checks against this repo's rules.
 
 ### General dependencies
-Along with Rust, you will also require a C compiler. 
- 
+Along with Rust, you will also require a C compiler.
+
 On Debian/Ubuntu, install with:
 ```shell
 sudo apt-get install build-essential
@@ -32,10 +32,10 @@ sudo apt-get install build-essential
 ```
 On Fedora systems, install with:
 ```shell
-sudo dnf install gcc 
+sudo dnf install gcc
 ```
 ### Audio library dependencies
-Depending on the chosen backend, specific development libraries are required. 
+Depending on the chosen backend, specific development libraries are required.
 
 *_Note this is an non-exhaustive list, open a PR to add to it!_*
 
@@ -103,6 +103,24 @@ Similarly, to build with the ALSA backend:
 ```bash
 cargo build --no-default-features --features "alsa-backend"
 ```
+
+### Compiling on Apple M1 for Apple x86_64 (or vice versa)
+
+Install the additional `x86_64-apple-darwin` target using rustup:
+
+```bash
+rustup target install x86_64-apple-darwin
+```
+
+Then run the build with some additional environment variables:
+
+```bash
+SDKROOT=$(xcrun -sdk macosx11.3 --show-sdk-path) \
+MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx11.3 --show-sdk-platform-version) \
+cargo build --target=x86_64-apple-darwin --release
+```
+
+The `sdk` value can vary, depending on what XCode version you're using.
 
 ### Running
 
