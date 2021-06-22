@@ -1,6 +1,6 @@
 [package]
 name = "spotty"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Librespot Org", "Michael Herger <michael@herger.net>"]
 license = "MIT"
 keywords = ["spotify"]

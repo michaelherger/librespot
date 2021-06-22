@@ -440,7 +440,11 @@ fn get_setup(args: &[String]) -> Setup {
         }
     };
 
-    let enable_discovery = !matches.opt_present("disable-discovery");
+    // don't enable discovery while fetching tracks or tokens
+    let enable_discovery = !matches.opt_present("disable-discovery")
+        && !matches.opt_present("single-track")
+        && !matches.opt_present("save-token")
+        && !matches.opt_present("get-token");
 
     let authenticate = matches.opt_present("authenticate");
     let start_position = matches.opt_str("start-position")
