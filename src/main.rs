@@ -176,12 +176,6 @@ fn get_setup(args: &[String]) -> Setup {
         )
         .optopt(
             "",
-            "normalisation-method",
-            "Specify the normalisation method to use - [basic, dynamic]. Default is dynamic.",
-            "NORMALISATION_METHOD",
-        )
-        .optopt(
-            "",
             "normalisation-gain-type",
             "Specify the normalisation gain type to use - [track, album]. Default is album.",
             "GAIN_TYPE",
@@ -406,19 +400,12 @@ fn get_setup(args: &[String]) -> Setup {
                 NormalisationType::from_str(gain_type).expect("Invalid normalisation type")
             })
             .unwrap_or_default();
-        let normalisation_method = matches
-            .opt_str("normalisation-method")
-            .as_ref()
-            .map(|gain_type| {
-                NormalisationMethod::from_str(gain_type).expect("Invalid normalisation method")
-            })
-            .unwrap_or_default();
 
         PlayerConfig {
             bitrate,
             gapless: !matches.opt_present("disable-gapless"),
             normalisation: matches.opt_present("enable-volume-normalisation"),
-            normalisation_method,
+            normalisation_method: NormalisationMethod::Basic,
             normalisation_type: gain_type,
             normalisation_pregain: PlayerConfig::default().normalisation_pregain,
             normalisation_threshold: PlayerConfig::default().normalisation_threshold,
