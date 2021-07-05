@@ -11,7 +11,6 @@ use futures_util::stream::futures_unordered::FuturesUnordered;
 use futures_util::{future, StreamExt, TryFutureExt};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::audio::{AudioDecoder, AudioError, AudioPacket, PassthroughDecoder, VorbisDecoder};
 use crate::audio::{AudioDecrypt, AudioFile, StreamLoaderController};
 use crate::audio::{
     READ_AHEAD_BEFORE_PLAYBACK_ROUNDTRIPS, READ_AHEAD_BEFORE_PLAYBACK_SECONDS,
@@ -22,6 +21,7 @@ use crate::config::{Bitrate, NormalisationMethod, NormalisationType, PlayerConfi
 use crate::core::session::Session;
 use crate::core::spotify_id::SpotifyId;
 use crate::core::util::SeqGenerator;
+use crate::decoder::{AudioDecoder, AudioError, AudioPacket, PassthroughDecoder, VorbisDecoder};
 use crate::metadata::{AudioItem, FileFormat};
 use crate::mixer::AudioFilter;
 
@@ -30,7 +30,7 @@ pub const NUM_CHANNELS: u8 = 2;
 pub const SAMPLES_PER_SECOND: u32 = SAMPLE_RATE as u32 * NUM_CHANNELS as u32;
 
 const PRELOAD_NEXT_TRACK_BEFORE_END_DURATION_MS: u32 = 30000;
-const DB_VOLTAGE_RATIO: f32 = 20.0;
+pub const DB_VOLTAGE_RATIO: f32 = 20.0;
 
 pub struct Player {
     commands: Option<mpsc::UnboundedSender<PlayerCommand>>,
@@ -196,6 +196,14 @@ impl PlayerEvent {
 
 pub type PlayerEventChannel = mpsc::UnboundedReceiver<PlayerEvent>;
 
+pub fn db_to_ratio(db: f32) -> f32 {
+    f32::powf(10.0, db / DB_VOLTAGE_RATIO)
+}
+
+pub fn ratio_to_db(ratio: f32) -> f32 {
+    ratio.log10() * DB_VOLTAGE_RATIO
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct NormalisationData {
     track_gain_db: f32,
@@ -205,14 +213,6 @@ pub struct NormalisationData {
 }
 
 impl NormalisationData {
-    pub fn db_to_ratio(db: f32) -> f32 {
-        f32::powf(10.0, db / DB_VOLTAGE_RATIO)
-    }
-
-    pub fn ratio_to_db(ratio: f32) -> f32 {
-        ratio.log10() * DB_VOLTAGE_RATIO
-    }
-
     fn parse_from_file<T: Read + Seek>(mut file: T) -> io::Result<NormalisationData> {
         const SPOTIFY_NORMALIZATION_HEADER_START_OFFSET: u64 = 144;
         file.seek(SeekFrom::Start(SPOTIFY_NORMALIZATION_HEADER_START_OFFSET))?;
@@ -233,17 +233,21 @@ impl NormalisationData {
     }
 
     fn get_factor(config: &PlayerConfig, data: NormalisationData) -> f32 {
+        if !config.normalisation {
+            return 1.0;
+        }
+
         let [gain_db, gain_peak] = match config.normalisation_type {
             NormalisationType::Album => [data.album_gain_db, data.album_peak],
             NormalisationType::Track => [data.track_gain_db, data.track_peak],
         };
 
         let normalisation_power = gain_db + config.normalisation_pregain;
-        let mut normalisation_factor = Self::db_to_ratio(normalisation_power);
+        let mut normalisation_factor = db_to_ratio(normalisation_power);
 
         if normalisation_factor * gain_peak > config.normalisation_threshold {
             let limited_normalisation_factor = config.normalisation_threshold / gain_peak;
-            let limited_normalisation_power = Self::ratio_to_db(limited_normalisation_factor);
+            let limited_normalisation_power = ratio_to_db(limited_normalisation_factor);
 
             if config.normalisation_method == NormalisationMethod::Basic {
                 warn!("Limiting gain to {:.2} dB for the duration of this track to stay under normalisation threshold.", limited_normalisation_power);
@@ -262,7 +266,7 @@ impl NormalisationData {
         debug!("Normalisation Type: {:?}", config.normalisation_type);
         debug!(
             "Normalisation Threshold: {:.1}",
-            Self::ratio_to_db(config.normalisation_threshold)
+            ratio_to_db(config.normalisation_threshold)
         );
         debug!("Normalisation Method: {:?}", config.normalisation_method);
         debug!("Normalisation Factor: {}", normalisation_factor);
@@ -538,10 +542,10 @@ impl PlayerState {
                     play_request_id,
                     loaded_track: PlayerLoadedTrackData {
                         decoder,
-                        duration_ms,
-                        bytes_per_second,
                         normalisation_factor,
                         stream_loader_controller,
+                        bytes_per_second,
+                        duration_ms,
                         stream_position_pcm,
                     },
                 };

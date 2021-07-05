@@ -2,7 +2,7 @@
 
 use futures_util::{future, FutureExt, StreamExt};
 use librespot_playback::player::PlayerEvent;
-use log::{info, warn};
+use log::{error, info, warn};
 use sha1::{Digest, Sha1};
 use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
@@ -10,14 +10,14 @@ use url::Url;
 use librespot::connect::spirc::Spirc;
 use librespot::core::authentication::Credentials;
 use librespot::core::cache::Cache;
-use librespot::core::config::{ConnectConfig, DeviceType, SessionConfig, VolumeCtrl};
+use librespot::core::config::{ConnectConfig, DeviceType, SessionConfig};
 use librespot::core::session::Session;
 use librespot::core::version;
-use librespot::playback::audio_backend::{self, Sink};
+use librespot::playback::audio_backend::{self, SinkBuilder};
 use librespot::playback::config::{
-    AudioFormat, Bitrate, NormalisationMethod, NormalisationType, PlayerConfig,
+    AudioFormat, Bitrate, NormalisationMethod, NormalisationType, PlayerConfig, VolumeCtrl,
 };
-use librespot::playback::mixer::{self, Mixer, MixerConfig};
+use librespot::playback::mixer::{self, MixerConfig, MixerFn};
 use librespot::playback::player::Player;
 
 mod spotty;
@@ -109,11 +109,9 @@ fn print_version() {
 #[derive(Clone)]
 struct Setup {
     format: AudioFormat,
-    backend: fn(Option<String>, AudioFormat) -> Box<dyn Sink + 'static>,
+    backend: SinkBuilder,
     device: Option<String>,
-
-    mixer: fn(Option<MixerConfig>) -> Box<dyn Mixer>,
-
+    mixer: MixerFn,
     cache: Option<Cache>,
     player_config: PlayerConfig,
     session_config: SessionConfig,
@@ -160,7 +158,7 @@ fn get_setup(args: &[String]) -> Setup {
         .optopt(
             "",
             "initial-volume",
-            "Initial volume in %, once connected (must be from 0 to 100)",
+            "Initial volume (%) once connected {0..100}. Defaults to 50 for softvol and for Alsa mixer the current volume.",
             "VOLUME",
         )
         .optopt(
@@ -299,9 +297,9 @@ fn get_setup(args: &[String]) -> Setup {
 
     let mixer_config = MixerConfig {
         card: String::from("default"),
-        mixer: String::from("PCM"),
+        control: String::from("PCM"),
         index: 0,
-        mapped_volume: false,
+        volume_ctrl: VolumeCtrl::Fixed,
     };
 
     let cache = {
@@ -320,15 +318,15 @@ fn get_setup(args: &[String]) -> Setup {
 
     let initial_volume = matches
         .opt_str("initial-volume")
-        .map(|volume| {
-            let volume = volume.parse::<u16>().unwrap();
+        .map(|initial_volume| {
+            let volume = initial_volume.parse::<u16>().unwrap();
             if volume > 100 {
-                panic!("Initial volume must be in the range 0-100");
+                error!("Initial volume must be in the range 0-100.");
+                // the cast will saturate, not necessary to take further action
             }
-            (volume as i32 * 0xFFFF / 100) as u16
+            (volume as f32 / 100.0 * VolumeCtrl::MAX_VOLUME as f32) as u16
         })
-        .or_else(|| cache.as_ref().and_then(Cache::volume))
-        .unwrap_or(0x8000);
+        .or_else(|| cache.as_ref().and_then(Cache::volume));
 
     let zeroconf_port = matches
         .opt_str("zeroconf-port")
@@ -393,7 +391,8 @@ fn get_setup(args: &[String]) -> Setup {
             .as_ref()
             .map(|bitrate| Bitrate::from_str(bitrate).expect("Invalid bitrate"))
             .unwrap_or_default();
-        let gain_type = matches
+
+        let normalisation_type = matches
             .opt_str("normalisation-gain-type")
             .as_ref()
             .map(|gain_type| {
@@ -405,8 +404,8 @@ fn get_setup(args: &[String]) -> Setup {
             bitrate,
             gapless: !matches.opt_present("disable-gapless"),
             normalisation: matches.opt_present("enable-volume-normalisation"),
+            normalisation_type: normalisation_type,
             normalisation_method: NormalisationMethod::Basic,
-            normalisation_type: gain_type,
             normalisation_pregain: PlayerConfig::default().normalisation_pregain,
             normalisation_threshold: PlayerConfig::default().normalisation_threshold,
             normalisation_attack: PlayerConfig::default().normalisation_attack,
@@ -418,12 +417,16 @@ fn get_setup(args: &[String]) -> Setup {
     };
 
     let connect_config = {
+        let device_type = DeviceType::default();
+        let has_volume_ctrl = !matches!(mixer_config.volume_ctrl, VolumeCtrl::Fixed);
+        let autoplay = matches.opt_present("autoplay");
+
         ConnectConfig {
             name,
-            device_type: DeviceType::default(),
-            volume: initial_volume,
-            volume_ctrl: VolumeCtrl::default(),
-            autoplay: matches.opt_present("autoplay"),
+            device_type,
+            initial_volume,
+            has_volume_ctrl,
+            autoplay,
         }
     };
 
@@ -447,16 +450,16 @@ fn get_setup(args: &[String]) -> Setup {
     Setup {
         format: AudioFormat::default(),
         backend: audio_backend::find(None).unwrap(),
-        cache,
-        session_config,
-        player_config,
-        connect_config,
-        credentials,
         device: None,
+        mixer,
+        cache,
+        player_config,
+        session_config,
+        connect_config,
+        mixer_config,
+        credentials,
         enable_discovery,
         zeroconf_port,
-        mixer,
-        mixer_config,
         // spotty
         authenticate,
         single_track: matches.opt_str("single-track"),
@@ -465,7 +468,7 @@ fn get_setup(args: &[String]) -> Setup {
         save_token: if save_token.as_str().len() == 0 { None } else { Some(save_token) },
         client_id: if client_id.as_str().len() == 0 { None } else { Some(client_id) },
         scopes: matches.opt_str("scope"),
-        lms
+        lms,
     }
 }
 
@@ -487,11 +490,14 @@ async fn main() {
     let mut connecting: Pin<Box<dyn future::FusedFuture<Output = _>>> = Box::pin(future::pending());
 
     if setup.enable_discovery {
-        let config = setup.connect_config.clone();
         let device_id = setup.session_config.device_id.clone();
 
         discovery = Some(
-            librespot_connect::discovery::discovery(config, device_id, setup.zeroconf_port)
+            librespot::discovery::Discovery::builder(device_id)
+                .name(setup.connect_config.name.clone())
+                .device_type(setup.connect_config.device_type)
+                .port(setup.zeroconf_port)
+                .launch()
                 .unwrap(),
         );
     }
@@ -553,7 +559,7 @@ async fn main() {
                     }
 
                     let mixer_config = setup.mixer_config.clone();
-                    let mixer = (setup.mixer)(Some(mixer_config));
+                    let mixer = (setup.mixer)(mixer_config);
                     let player_config = setup.player_config.clone();
                     let connect_config = setup.connect_config.clone();
 

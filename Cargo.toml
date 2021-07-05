@@ -32,6 +32,10 @@ path = "core"
 version = "0.2.0"
 features = ["apresolve"]
 
+[dependencies.librespot-discovery]
+path = "discovery"
+version = "0.2.0"
+
 [dependencies.librespot-metadata]
 path = "metadata"
 version = "0.2.0"
@@ -56,11 +60,11 @@ rpassword = "5.0"
 serde_json = "0.9.5"
 thiserror = "1.0"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "process"] }
-url = "2.1"
+url = "2.2"
 sha-1 = "0.9"
 
 [features]
-with-dns-sd = ["librespot-connect/with-dns-sd"]
+with-dns-sd = ["librespot-discovery/with-dns-sd"]
 
 [profile.release]
 lto = true
