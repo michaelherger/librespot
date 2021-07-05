@@ -18,6 +18,7 @@ use librespot::playback::config::{
     AudioFormat, Bitrate, NormalisationMethod, NormalisationType, PlayerConfig, VolumeCtrl,
 };
 use librespot::playback::mixer::{self, MixerConfig, MixerFn};
+use librespot::playback::mixer::softmixer::SoftMixer;
 use librespot::playback::player::Player;
 
 mod spotty;
@@ -340,7 +341,7 @@ fn get_setup(args: &[String]) -> Setup {
         build_id = version::BUILD_ID
     );
 
-    let mixer = mixer::find(Some("softvol")).expect("Invalid mixer");
+    let mixer = mixer::find(Some(SoftMixer::NAME).as_deref()).expect("Invalid mixer");
 
     let mixer_config = MixerConfig {
         card: String::from("default"),
