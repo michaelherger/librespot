@@ -132,145 +132,156 @@ struct Setup {
 
 fn get_setup(args: &[String]) -> Setup {
     let mut opts = getopts::Options::new();
-    opts.optopt(
+    opts.optflag(
+        "h",
+        "help",
+        "Print this help menu.",
+    ).optopt(
         "c",
         "cache",
         "Path to a directory where files will be cached.",
-        "CACHE",
+        "PATH",
     ).optflag("", "disable-audio-cache", "(Only here fore compatibility with librespot - audio cache is disabled by default).")
-        .optflag("", "enable-audio-cache", "Enable caching of the audio data.")
-        .optopt("n", "name", "Device name", "NAME")
-        .optopt(
-            "b",
-            "bitrate",
-            "Bitrate (96, 160 or 320). Defaults to 160",
-            "BITRATE",
-        )
-        .optflag("v", "verbose", "Enable verbose output")
-        .optflag("V", "version", "Display librespot version string")
-        .optopt("u", "username", "Username to sign in with", "USERNAME")
-        .optopt("p", "password", "Password", "PASSWORD")
-        .optopt("", "proxy", "HTTP proxy to use when connecting", "PROXY")
-        .optopt("", "ap-port", "Connect to AP with specified port. If no AP with that port are present fallback AP will be used. Available ports are usually 80, 443 and 4070", "AP_PORT")
-        .optflag("", "disable-discovery", "Disable discovery mode")
-        .optopt(
-            "",
-            "initial-volume",
-            "Initial volume (%) once connected {0..100}. Defaults to 50 for softvol and for Alsa mixer the current volume.",
-            "VOLUME",
-        )
-        .optopt(
-            "",
-            "zeroconf-port",
-            "The port the internal server advertised over zeroconf uses.",
-            "ZEROCONF_PORT",
-        )
-        .optopt(
-            "",
-            "dither",
-            "Specify the dither algorithm to use - [none, gpdf, tpdf, tpdf_hp]. Defaults to 'tpdf' for formats S16, S24, S24_3 and 'none' for other formats.",
-            "DITHER",
-        )
-        .optflag(
-            "",
-            "enable-volume-normalisation",
-            "Play all tracks at the same volume",
-        )
-        .optopt(
-            "",
-            "normalisation-gain-type",
-            "Specify the normalisation gain type to use - [track, album]. Default is album.",
-            "GAIN_TYPE",
-        )
-        .optflag(
-            "",
-            "autoplay",
-            "autoplay similar songs when your music ends.",
-        )
-        .optflag(
-            "",
-            "disable-gapless",
-            "disable gapless playback.",
-        )
-	    .optflag(
-            "",
-            "passthrough",
-            "Pass raw stream to output, only works for \"pipe\"."
-        )
-        // spotty
-        .optflag("a", "authenticate", "Authenticate given username and password. Make sure you define a cache folder to store credentials.")
-        .optopt(
-            "",
-            "single-track",
-            "Play a single track ID and exit.",
-            "ID"
-        )
-        .optopt(
-            "",
-            "start-position",
-            "Position (in seconds) where playback should be started. Only valid with the --single-track option.",
-            "STARTPOSITION"
-        )
-        .optflag(
-            "x",
-            "check",
-            "Run quick internal check"
-        )
-        .optopt(
-            "i",
-            "client-id",
-            "A Spotify client_id to be used to get the oauth token. Required with the --get-token request.",
-            "CLIENT_ID"
-        )
-        .optopt(
-            "",
-            "scope",
-            "The scopes you want to have access to with the oauth token.",
-            "SCOPE"
-        )
-        .optflag(
-            "t",
-            "get-token",
-            "Get oauth token to be used with the web API etc. and print it to the console."
-        )
-        .optopt(
-            "T",
-            "save-token",
-            "Get oauth token to be used with the web API etc. and store it in the given file.",
-            "TOKENFILE"
-        )
-        .optflag(
-            "",
-            "pass-through",
-            "Pass raw stream to output, only works for \"pipe\"."
-        )
-        .optopt(
-            "",
-            "lms",
-            "hostname and port of Logitech Media Server instance (eg. localhost:9000)",
-            "LMS"
-        )
-        .optopt(
-            "",
-            "lms-auth",
-            "Authentication data to access Logitech Media Server",
-            "LMSAUTH"
-        )
-        .optopt(
-            "",
-            "player-mac",
-            "MAC address of the Squeezebox to be controlled",
-            "MAC"
-        )
-        ;
+    .optflag("", "enable-audio-cache", "Enable caching of the audio data.")
+    .optopt("n", "name", "Device name", "NAME")
+    .optopt(
+        "b",
+        "bitrate",
+        "Bitrate (96, 160 or 320). Defaults to 160",
+        "BITRATE",
+    )
+    .optflag("v", "verbose", "Enable verbose output")
+    .optflag("V", "version", "Display spotty version string")
+    .optopt("u", "username", "Username to sign in with", "USERNAME")
+    .optopt("p", "password", "Password", "PASSWORD")
+    .optopt("", "proxy", "HTTP proxy to use when connecting", "URL")
+    .optopt("", "ap-port", "Connect to AP with specified port. If no AP with that port are present fallback AP will be used. Available ports are usually 80, 443 and 4070", "PORT")
+    .optflag("", "disable-discovery", "Disable discovery mode")
+    .optopt(
+        "",
+        "initial-volume",
+        "Initial volume (%) once connected {0..100}. Defaults to 50 for softvol and for Alsa mixer the current volume.",
+        "VOLUME",
+    )
+    .optopt(
+        "",
+        "zeroconf-port",
+        "The port the internal server advertised over zeroconf uses.",
+        "PORT",
+    )
+    .optflag(
+        "",
+        "enable-volume-normalisation",
+        "Play all tracks at the same volume",
+    )
+    .optopt(
+        "",
+        "normalisation-gain-type",
+        "Specify the normalisation gain type to use - [track, album]. Default is album.",
+        "TYPE",
+    )
+    .optflag(
+        "",
+        "autoplay",
+        "autoplay similar songs when your music ends.",
+    )
+    .optflag(
+        "",
+        "disable-gapless",
+        "disable gapless playback.",
+    )
+    .optflag(
+        "",
+        "passthrough",
+        "Pass raw stream to output, only works for \"pipe\"."
+    )
+
+    // spotty
+    .optflag(
+        "a",
+        "authenticate",
+        "Authenticate given username and password. Make sure you define a cache folder to store credentials."
+    )
+    .optopt(
+        "",
+        "single-track",
+        "Play a single track ID and exit.",
+        "ID"
+    )
+    .optopt(
+        "",
+        "start-position",
+        "Position (in seconds) where playback should be started. Only valid with the --single-track option.",
+        "STARTPOSITION"
+    )
+    .optflag(
+        "x",
+        "check",
+        "Run quick internal check"
+    )
+    .optopt(
+        "i",
+        "client-id",
+        "A Spotify client_id to be used to get the oauth token. Required with the --get-token request.",
+        "CLIENT_ID"
+    )
+    .optopt(
+        "",
+        "scope",
+        "The scopes you want to have access to with the oauth token.",
+        "SCOPE"
+    )
+    .optflag(
+        "t",
+        "get-token",
+        "Get oauth token to be used with the web API etc. and print it to the console."
+    )
+    .optopt(
+        "T",
+        "save-token",
+        "Get oauth token to be used with the web API etc. and store it in the given file.",
+        "TOKENFILE"
+    )
+    .optflag(
+        "",
+        "pass-through",
+        "Pass raw stream to output, only works for \"pipe\"."
+    )
+    .optopt(
+        "",
+        "lms",
+        "hostname and port of Logitech Media Server instance (eg. localhost:9000)",
+        "LMS"
+    )
+    .optopt(
+        "",
+        "lms-auth",
+        "Authentication data to access Logitech Media Server",
+        "LMSAUTH"
+    )
+    .optopt(
+        "",
+        "player-mac",
+        "MAC address of the Squeezebox to be controlled",
+        "MAC"
+    );
 
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
         Err(f) => {
-            eprintln!("error: {}\n{}", f.to_string(), usage(&args[0], &opts));
+            eprintln!(
+                "Error parsing command line options: {}\n{}",
+                f,
+                usage(&args[0], &opts)
+            );
             exit(1);
         }
     };
+
+    if matches.opt_present("h") {
+        println!("{}", usage(&args[0], &opts));
+        exit(0);
+    }
 
     if matches.opt_present("version") {
         print_version();
@@ -369,7 +380,7 @@ fn get_setup(args: &[String]) -> Setup {
                     match Url::parse(&s) {
                         Ok(url) => {
                             if url.host().is_none() || url.port_or_known_default().is_none() {
-                                panic!("Invalid proxy url, only urls on the format \"http://host:port\" are allowed");
+                                panic!("Invalid proxy url, only URLs on the format \"http://host:port\" are allowed");
                             }
 
                             if url.scheme() != "http" {
@@ -377,7 +388,7 @@ fn get_setup(args: &[String]) -> Setup {
                             }
                             url
                         },
-                    Err(err) => panic!("Invalid proxy url: {}, only urls on the format \"http://host:port\" are allowed", err)
+                        Err(err) => panic!("Invalid proxy URL: {}, only URLs in the format \"http://host:port\" are allowed", err)
                     }
                 },
             ),
