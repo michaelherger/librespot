@@ -106,11 +106,9 @@ fn print_version() {
     );
 }
 
-#[derive(Clone)]
 struct Setup {
     format: AudioFormat,
     backend: SinkBuilder,
-    device: Option<String>,
     mixer: MixerFn,
     cache: Option<Cache>,
     player_config: PlayerConfig,
@@ -166,6 +164,12 @@ fn get_setup(args: &[String]) -> Setup {
             "zeroconf-port",
             "The port the internal server advertised over zeroconf uses.",
             "ZEROCONF_PORT",
+        )
+        .optopt(
+            "",
+            "dither",
+            "Specify the dither algorithm to use - [none, gpdf, tpdf, tpdf_hp]. Defaults to 'tpdf' for formats S16, S24, S24_3 and 'none' for other formats.",
+            "DITHER",
         )
         .optflag(
             "",
@@ -400,9 +404,12 @@ fn get_setup(args: &[String]) -> Setup {
             })
             .unwrap_or_default();
 
+        let ditherer = PlayerConfig::default().ditherer;
+
         PlayerConfig {
             bitrate,
             gapless: !matches.opt_present("disable-gapless"),
+            passthrough,
             normalisation: matches.opt_present("enable-volume-normalisation"),
             normalisation_type: normalisation_type,
             normalisation_method: NormalisationMethod::Basic,
@@ -411,7 +418,7 @@ fn get_setup(args: &[String]) -> Setup {
             normalisation_attack: PlayerConfig::default().normalisation_attack,
             normalisation_release: PlayerConfig::default().normalisation_release,
             normalisation_knee: PlayerConfig::default().normalisation_knee,
-            passthrough,
+            ditherer,
             lms_connect_mode: !matches.opt_present("single-track"),
         }
     };
@@ -450,7 +457,6 @@ fn get_setup(args: &[String]) -> Setup {
     Setup {
         format: AudioFormat::default(),
         backend: audio_backend::find(None).unwrap(),
-        device: None,
         mixer,
         cache,
         player_config,

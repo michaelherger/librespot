@@ -1,5 +1,6 @@
 use super::player::db_to_ratio;
 use crate::convert::i24;
+pub use crate::dither::{mk_ditherer, DithererBuilder, TriangularDitherer};
 
 use std::convert::TryFrom;
 use std::mem;
@@ -117,10 +118,12 @@ impl Default for NormalisationMethod {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PlayerConfig {
     pub bitrate: Bitrate,
     pub gapless: bool,
+    pub passthrough: bool,
+
     pub normalisation: bool,
     pub normalisation_type: NormalisationType,
     pub normalisation_method: NormalisationMethod,
@@ -129,13 +132,17 @@ pub struct PlayerConfig {
     pub normalisation_attack: f32,
     pub normalisation_release: f32,
     pub normalisation_knee: f32,
-    pub passthrough: bool,
+
+    // pass function pointers so they can be lazily instantiated *after* spawning a thread
+    // (thereby circumventing Send bounds that they might not satisfy)
+    pub ditherer: Option<DithererBuilder>,
+
     pub lms_connect_mode: bool,
 }
 
 impl Default for PlayerConfig {
-    fn default() -> PlayerConfig {
-        PlayerConfig {
+    fn default() -> Self {
+        Self {
             bitrate: Bitrate::default(),
             gapless: true,
             normalisation: false,
@@ -147,6 +154,7 @@ impl Default for PlayerConfig {
             normalisation_release: 0.1,
             normalisation_knee: 1.0,
             passthrough: false,
+            ditherer: Some(mk_ditherer::<TriangularDitherer>),
             lms_connect_mode: false,
         }
     }
