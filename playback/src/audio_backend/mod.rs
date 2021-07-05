@@ -35,21 +35,25 @@ macro_rules! sink_as_bytes {
             use zerocopy::AsBytes;
             match packet {
                 AudioPacket::Samples(samples) => match self.format {
-                    AudioFormat::F32 => self.write_bytes(samples.as_bytes()),
+                    AudioFormat::F64 => self.write_bytes(samples.as_bytes()),
+                    AudioFormat::F32 => {
+                        let samples_f32: &[f32] = &converter.f64_to_f32(samples);
+                        self.write_bytes(samples_f32.as_bytes())
+                    }
                     AudioFormat::S32 => {
-                        let samples_s32: &[i32] = &converter.f32_to_s32(samples);
+                        let samples_s32: &[i32] = &converter.f64_to_s32(samples);
                         self.write_bytes(samples_s32.as_bytes())
                     }
                     AudioFormat::S24 => {
-                        let samples_s24: &[i32] = &converter.f32_to_s24(samples);
+                        let samples_s24: &[i32] = &converter.f64_to_s24(samples);
                         self.write_bytes(samples_s24.as_bytes())
                     }
                     AudioFormat::S24_3 => {
-                        let samples_s24_3: &[i24] = &converter.f32_to_s24_3(samples);
+                        let samples_s24_3: &[i24] = &converter.f64_to_s24_3(samples);
                         self.write_bytes(samples_s24_3.as_bytes())
                     }
                     AudioFormat::S16 => {
-                        let samples_s16: &[i16] = &converter.f32_to_s16(samples);
+                        let samples_s16: &[i16] = &converter.f64_to_s16(samples);
                         self.write_bytes(samples_s16.as_bytes())
                     }
                 },
@@ -86,6 +90,8 @@ use self::gstreamer::GstreamerSink;
 
 #[cfg(any(feature = "rodio-backend", feature = "rodiojack-backend"))]
 mod rodio;
+#[cfg(any(feature = "rodio-backend", feature = "rodiojack-backend"))]
+use self::rodio::RodioSink;
 
 #[cfg(feature = "sdl-backend")]
 mod sdl;
@@ -100,23 +106,23 @@ use self::subprocess::SubprocessSink;
 
 pub const BACKENDS: &[(&str, SinkBuilder)] = &[
     #[cfg(feature = "rodio-backend")]
-    ("rodio", rodio::mk_rodio), // default goes first
+    (RodioSink::NAME, rodio::mk_rodio), // default goes first
     #[cfg(feature = "alsa-backend")]
-    ("alsa", mk_sink::<AlsaSink>),
+    (AlsaSink::NAME, mk_sink::<AlsaSink>),
     #[cfg(feature = "portaudio-backend")]
-    ("portaudio", mk_sink::<PortAudioSink>),
+    (PortAudioSink::NAME, mk_sink::<PortAudioSink>),
     #[cfg(feature = "pulseaudio-backend")]
-    ("pulseaudio", mk_sink::<PulseAudioSink>),
+    (PulseAudioSink::NAME, mk_sink::<PulseAudioSink>),
     #[cfg(feature = "jackaudio-backend")]
-    ("jackaudio", mk_sink::<JackSink>),
+    (JackSink::NAME, mk_sink::<JackSink>),
     #[cfg(feature = "gstreamer-backend")]
-    ("gstreamer", mk_sink::<GstreamerSink>),
+    (GstreamerSink::NAME, mk_sink::<GstreamerSink>),
     #[cfg(feature = "rodiojack-backend")]
     ("rodiojack", rodio::mk_rodiojack),
     #[cfg(feature = "sdl-backend")]
-    ("sdl", mk_sink::<SdlSink>),
-    ("pipe", mk_sink::<StdoutSink>),
-    ("subprocess", mk_sink::<SubprocessSink>),
+    (SdlSink::NAME, mk_sink::<SdlSink>),
+    (StdoutSink::NAME, mk_sink::<StdoutSink>),
+    (SubprocessSink::NAME, mk_sink::<SubprocessSink>),
 ];
 
 pub fn find(name: Option<String>) -> Option<SinkBuilder> {

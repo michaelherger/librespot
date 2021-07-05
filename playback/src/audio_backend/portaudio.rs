@@ -2,7 +2,7 @@ use super::{Open, Sink};
 use crate::config::AudioFormat;
 use crate::convert::Converter;
 use crate::decoder::AudioPacket;
-use crate::player::{NUM_CHANNELS, SAMPLE_RATE};
+use crate::{NUM_CHANNELS, SAMPLE_RATE};
 use portaudio_rs::device::{get_default_output_index, DeviceIndex, DeviceInfo};
 use portaudio_rs::stream::*;
 use std::io;
@@ -57,7 +57,7 @@ impl<'a> Open for PortAudioSink<'a> {
 
         portaudio_rs::initialize().unwrap();
 
-        let device_idx = match device.as_ref().map(AsRef::as_ref) {
+        let device_idx = match device.as_deref() {
             Some("?") => {
                 list_outputs();
                 exit(0)
@@ -151,14 +151,15 @@ impl<'a> Sink for PortAudioSink<'a> {
         let samples = packet.samples();
         let result = match self {
             Self::F32(stream, _parameters) => {
-                write_sink!(ref mut stream, samples)
+                let samples_f32: &[f32] = &converter.f64_to_f32(samples);
+                write_sink!(ref mut stream, samples_f32)
             }
             Self::S32(stream, _parameters) => {
-                let samples_s32: &[i32] = &converter.f32_to_s32(samples);
+                let samples_s32: &[i32] = &converter.f64_to_s32(samples);
                 write_sink!(ref mut stream, samples_s32)
             }
             Self::S16(stream, _parameters) => {
-                let samples_s16: &[i16] = &converter.f32_to_s16(samples);
+                let samples_s16: &[i16] = &converter.f64_to_s16(samples);
                 write_sink!(ref mut stream, samples_s16)
             }
         };
@@ -176,4 +177,8 @@ impl<'a> Drop for PortAudioSink<'a> {
     fn drop(&mut self) {
         portaudio_rs::terminate().unwrap();
     }
+}
+
+impl<'a> PortAudioSink<'a> {
+    pub const NAME: &'static str = "portaudio";
 }
