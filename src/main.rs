@@ -347,7 +347,7 @@ fn get_setup(args: &[String]) -> Setup {
         card: String::from("default"),
         control: String::from("PCM"),
         index: 0,
-        volume_ctrl: VolumeCtrl::Fixed,
+        volume_ctrl: VolumeCtrl::Linear,
     };
 
     let cache = {
