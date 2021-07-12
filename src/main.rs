@@ -2,7 +2,7 @@
 
 use futures_util::{future, FutureExt, StreamExt};
 use librespot_playback::player::PlayerEvent;
-use log::{info, warn};
+use log::{error, info, warn};
 use sha1::{Digest, Sha1};
 use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
@@ -10,26 +10,26 @@ use url::Url;
 use librespot::connect::spirc::Spirc;
 use librespot::core::authentication::Credentials;
 use librespot::core::cache::Cache;
-use librespot::core::config::{ConnectConfig, DeviceType, SessionConfig, VolumeCtrl};
+use librespot::core::config::{ConnectConfig, DeviceType, SessionConfig};
 use librespot::core::session::Session;
 use librespot::core::version;
-use librespot::playback::audio_backend::{self, Sink};
+use librespot::playback::audio_backend::{self, SinkBuilder};
 use librespot::playback::config::{
-    AudioFormat, Bitrate, NormalisationMethod, NormalisationType, PlayerConfig,
+    AudioFormat, Bitrate, NormalisationMethod, NormalisationType, PlayerConfig, VolumeCtrl,
 };
-use librespot::playback::mixer::{self, Mixer, MixerConfig};
+use librespot::playback::mixer::{self, MixerConfig, MixerFn};
+use librespot::playback::mixer::softmixer::SoftMixer;
 use librespot::playback::player::Player;
 
 mod spotty;
 use spotty::{LMS};
 
+use std::env;
+use std::io::{stderr, Write};
+use std::pin::Pin;
 use std::process::exit;
 use std::str::FromStr;
-use std::{env, time::Instant};
-use std::{
-    io::{stderr, Write},
-    pin::Pin,
-};
+use std::time::Instant;
 
 const VERSION: &'static str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
@@ -106,14 +106,10 @@ fn print_version() {
     );
 }
 
-#[derive(Clone)]
 struct Setup {
     format: AudioFormat,
-    backend: fn(Option<String>, AudioFormat) -> Box<dyn Sink + 'static>,
-    device: Option<String>,
-
-    mixer: fn(Option<MixerConfig>) -> Box<dyn Mixer>,
-
+    backend: SinkBuilder,
+    mixer: MixerFn,
     cache: Option<Cache>,
     player_config: PlayerConfig,
     session_config: SessionConfig,
@@ -135,154 +131,204 @@ struct Setup {
 }
 
 fn get_setup(args: &[String]) -> Setup {
+    const AP_PORT: &str = "ap-port";
+    const AUTHENTICATE: &str = "a";
+    const AUTOPLAY: &str = "autoplay";
+    const BITRATE: &str = "b";
+    const CACHE: &str = "c";
+    const CHECK: &str = "check";
+    const CLIENT_ID: &str = "client-id";
+    const DISABLE_AUDIO_CACHE: &str = "disable-audio-cache";
+    const DISABLE_DISCOVERY: &str = "disable-discovery";
+    const DISABLE_GAPLESS: &str = "disable-gapless";
+    const ENABLE_AUDIO_CACHE: &str = "enable-audio-cache";
+    const ENABLE_VOLUME_NORMALISATION: &str = "enable-volume-normalisation";
+    const GET_TOKEN: &str = "get-token";
+    const HELP: &str = "h";
+    const INITIAL_VOLUME: &str = "initial-volume";
+    const LMS_AUTH: &str = "lms-auth";
+    const LOGITECH_MEDIA_SERVER: &str = "lms";
+    const NAME: &str = "name";
+    const NORMALISATION_GAIN_TYPE: &str = "normalisation-gain-type";
+    const PASSTHROUGH: &str = "passthrough";
+    const PASS_THROUGH: &str = "pass-through";
+    const PASSWORD: &str = "password";
+    const PLAYER_MAC: &str = "player-mac";
+    const PROXY: &str = "proxy";
+    const SAVE_TOKEN: &str = "save-token";
+    const SCOPE: &str = "scope";
+    const SINGLE_TRACK: &str = "single-track";
+    const START_POSITION: &str = "start-position";
+    const USERNAME: &str = "username";
+    const VERBOSE: &str = "verbose";
+    const VERSION: &str = "version";
+    const ZEROCONF_PORT: &str = "zeroconf-port";
+
     let mut opts = getopts::Options::new();
-    opts.optopt(
-        "c",
+    opts.optflag(
+        HELP,
+        "help",
+        "Print this help menu.",
+    ).optopt(
+        CACHE,
         "cache",
         "Path to a directory where files will be cached.",
-        "CACHE",
-    ).optflag("", "disable-audio-cache", "(Only here fore compatibility with librespot - audio cache is disabled by default).")
-        .optflag("", "enable-audio-cache", "Enable caching of the audio data.")
-        .optopt("n", "name", "Device name", "NAME")
-        .optopt(
-            "b",
-            "bitrate",
-            "Bitrate (96, 160 or 320). Defaults to 160",
-            "BITRATE",
-        )
-        .optflag("v", "verbose", "Enable verbose output")
-        .optflag("V", "version", "Display librespot version string")
-        .optopt("u", "username", "Username to sign in with", "USERNAME")
-        .optopt("p", "password", "Password", "PASSWORD")
-        .optopt("", "proxy", "HTTP proxy to use when connecting", "PROXY")
-        .optopt("", "ap-port", "Connect to AP with specified port. If no AP with that port are present fallback AP will be used. Available ports are usually 80, 443 and 4070", "AP_PORT")
-        .optflag("", "disable-discovery", "Disable discovery mode")
-        .optopt(
-            "",
-            "initial-volume",
-            "Initial volume in %, once connected (must be from 0 to 100)",
-            "VOLUME",
-        )
-        .optopt(
-            "",
-            "zeroconf-port",
-            "The port the internal server advertised over zeroconf uses.",
-            "ZEROCONF_PORT",
-        )
-        .optflag(
-            "",
-            "enable-volume-normalisation",
-            "Play all tracks at the same volume",
-        )
-        .optopt(
-            "",
-            "normalisation-gain-type",
-            "Specify the normalisation gain type to use - [track, album]. Default is album.",
-            "GAIN_TYPE",
-        )
-        .optflag(
-            "",
-            "autoplay",
-            "autoplay similar songs when your music ends.",
-        )
-        .optflag(
-            "",
-            "disable-gapless",
-            "disable gapless playback.",
-        )
-	    .optflag(
-            "",
-            "passthrough",
-            "Pass raw stream to output, only works for \"pipe\"."
-        )
-        // spotty
-        .optflag("a", "authenticate", "Authenticate given username and password. Make sure you define a cache folder to store credentials.")
-        .optopt(
-            "",
-            "single-track",
-            "Play a single track ID and exit.",
-            "ID"
-        )
-        .optopt(
-            "",
-            "start-position",
-            "Position (in seconds) where playback should be started. Only valid with the --single-track option.",
-            "STARTPOSITION"
-        )
-        .optflag(
-            "x",
-            "check",
-            "Run quick internal check"
-        )
-        .optopt(
-            "i",
-            "client-id",
-            "A Spotify client_id to be used to get the oauth token. Required with the --get-token request.",
-            "CLIENT_ID"
-        )
-        .optopt(
-            "",
-            "scope",
-            "The scopes you want to have access to with the oauth token.",
-            "SCOPE"
-        )
-        .optflag(
-            "t",
-            "get-token",
-            "Get oauth token to be used with the web API etc. and print it to the console."
-        )
-        .optopt(
-            "T",
-            "save-token",
-            "Get oauth token to be used with the web API etc. and store it in the given file.",
-            "TOKENFILE"
-        )
-        .optflag(
-            "",
-            "pass-through",
-            "Pass raw stream to output, only works for \"pipe\"."
-        )
-        .optopt(
-            "",
-            "lms",
-            "hostname and port of Logitech Media Server instance (eg. localhost:9000)",
-            "LMS"
-        )
-        .optopt(
-            "",
-            "lms-auth",
-            "Authentication data to access Logitech Media Server",
-            "LMSAUTH"
-        )
-        .optopt(
-            "",
-            "player-mac",
-            "MAC address of the Squeezebox to be controlled",
-            "MAC"
-        )
-        ;
+        "PATH",
+    ).optflag("", DISABLE_AUDIO_CACHE, "(Only here fore compatibility with librespot - audio cache is disabled by default).")
+    .optflag("", ENABLE_AUDIO_CACHE, "Enable caching of the audio data.")
+    .optopt("n", NAME, "Device name", "NAME")
+    .optopt(
+        BITRATE,
+        "bitrate",
+        "Bitrate (96, 160 or 320). Defaults to 160",
+        "BITRATE",
+    )
+    .optflag("v", VERBOSE, "Enable verbose output.")
+    .optflag("V", VERSION, "Display librespot version string.")
+    .optopt("u", USERNAME, "Username to sign in with.", "USERNAME")
+    .optopt("p", PASSWORD, "Password", "PASSWORD")
+    .optopt("", PROXY, "HTTP proxy to use when connecting.", "URL")
+    .optopt("", AP_PORT, "Connect to AP with specified port. If no AP with that port are present fallback AP will be used. Available ports are usually 80, 443 and 4070.", "PORT")
+    .optflag("", DISABLE_DISCOVERY, "Disable discovery mode.")
+    .optopt(
+        "",
+        INITIAL_VOLUME,
+        "Initial volume (%) once connected {0..100}. Defaults to 50 for softvol and for Alsa mixer the current volume.",
+        "VOLUME",
+    )
+    .optopt(
+        "",
+        ZEROCONF_PORT,
+        "The port the internal server advertised over zeroconf uses.",
+        "PORT",
+    )
+    .optflag(
+        "",
+        ENABLE_VOLUME_NORMALISATION,
+        "Play all tracks at the same volume.",
+    )
+    .optopt(
+        "",
+        NORMALISATION_GAIN_TYPE,
+        "Specify the normalisation gain type to use {track|album}. Defaults to album.",
+        "TYPE",
+    )
+    .optflag(
+        "",
+        AUTOPLAY,
+        "autoplay similar songs when your music ends.",
+    )
+    .optflag(
+        "",
+        DISABLE_GAPLESS,
+        "disable gapless playback.",
+    )
+    .optflag(
+        "",
+        PASSTHROUGH,
+        "Pass raw stream to output, only works for \"pipe\"."
+    )
+
+    // spotty
+    .optflag(
+        AUTHENTICATE,
+        "authenticate",
+        "Authenticate given username and password. Make sure you define a cache folder to store credentials."
+    )
+    .optopt(
+        "",
+        SINGLE_TRACK,
+        "Play a single track ID and exit.",
+        "ID"
+    )
+    .optopt(
+        "",
+        START_POSITION,
+        "Position (in seconds) where playback should be started. Only valid with the --single-track option.",
+        "STARTPOSITION"
+    )
+    .optflag(
+        "x",
+        CHECK,
+        "Run quick internal check"
+    )
+    .optopt(
+        "i",
+        CLIENT_ID,
+        "A Spotify client_id to be used to get the oauth token. Required with the --get-token request.",
+        "CLIENT_ID"
+    )
+    .optopt(
+        "",
+        SCOPE,
+        "The scopes you want to have access to with the oauth token.",
+        "SCOPE"
+    )
+    .optflag(
+        "t",
+        GET_TOKEN,
+        "Get oauth token to be used with the web API etc. and print it to the console."
+    )
+    .optopt(
+        "T",
+        SAVE_TOKEN,
+        "Get oauth token to be used with the web API etc. and store it in the given file.",
+        "TOKENFILE"
+    )
+    .optflag(
+        "",
+        PASS_THROUGH,
+        "Pass raw stream to output, only works for \"pipe\"."
+    )
+    .optopt(
+        "",
+        LOGITECH_MEDIA_SERVER,
+        "hostname and port of Logitech Media Server instance (eg. localhost:9000)",
+        "LMS"
+    )
+    .optopt(
+        "",
+        LMS_AUTH,
+        "Authentication data to access Logitech Media Server",
+        "LMSAUTH"
+    )
+    .optopt(
+        "",
+        PLAYER_MAC,
+        "MAC address of the Squeezebox to be controlled",
+        "MAC"
+    );
 
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
         Err(f) => {
-            eprintln!("error: {}\n{}", f.to_string(), usage(&args[0], &opts));
+            eprintln!(
+                "Error parsing command line options: {}\n{}",
+                f,
+                usage(&args[0], &opts)
+            );
             exit(1);
         }
     };
 
-    if matches.opt_present("version") {
+    if matches.opt_present(HELP) {
+        println!("{}", usage(&args[0], &opts));
+        exit(0);
+    }
+
+    if matches.opt_present(VERSION) {
         print_version();
         exit(0);
     }
 
-    if matches.opt_present("check") {
+    if matches.opt_present(CHECK) {
         spotty::check();
     }
 
 
     #[cfg(debug_assertions)]
     {
-    let verbose = matches.opt_present("verbose");
+    let verbose = matches.opt_present(VERBOSE);
     setup_logging(verbose);
     }
 
@@ -295,13 +341,13 @@ fn get_setup(args: &[String]) -> Setup {
         build_id = version::BUILD_ID
     );
 
-    let mixer = mixer::find(Some("softvol")).expect("Invalid mixer");
+    let mixer = mixer::find(Some(SoftMixer::NAME).as_deref()).expect("Invalid mixer");
 
     let mixer_config = MixerConfig {
         card: String::from("default"),
-        mixer: String::from("PCM"),
+        control: String::from("PCM"),
         index: 0,
-        mapped_volume: false,
+        volume_ctrl: VolumeCtrl::Linear,
     };
 
     let cache = {
@@ -319,25 +365,25 @@ fn get_setup(args: &[String]) -> Setup {
     };
 
     let initial_volume = matches
-        .opt_str("initial-volume")
-        .map(|volume| {
-            let volume = volume.parse::<u16>().unwrap();
+        .opt_str(INITIAL_VOLUME)
+        .map(|initial_volume| {
+            let volume = initial_volume.parse::<u16>().unwrap();
             if volume > 100 {
-                panic!("Initial volume must be in the range 0-100");
+                error!("Initial volume must be in the range 0-100.");
+                // the cast will saturate, not necessary to take further action
             }
-            (volume as i32 * 0xFFFF / 100) as u16
+            (volume as f32 / 100.0 * VolumeCtrl::MAX_VOLUME as f32) as u16
         })
-        .or_else(|| cache.as_ref().and_then(Cache::volume))
-        .unwrap_or(0x8000);
+        .or_else(|| cache.as_ref().and_then(Cache::volume));
 
     let zeroconf_port = matches
-        .opt_str("zeroconf-port")
+        .opt_str(ZEROCONF_PORT)
         .map(|port| port.parse::<u16>().unwrap())
         .unwrap_or(0);
 
     let name = matches
-        .opt_str("name")
-        .unwrap_or_else(|| "Librespot".to_string());
+        .opt_str(NAME)
+        .unwrap_or_else(|| "Spotty".to_string());
 
     let credentials = {
         let cached_credentials = cache.as_ref().and_then(Cache::credentials);
@@ -349,8 +395,8 @@ fn get_setup(args: &[String]) -> Setup {
         };
 
         get_credentials(
-            matches.opt_str("username"),
-            matches.opt_str("password"),
+            matches.opt_str(USERNAME),
+            matches.opt_str(PASSWORD),
             cached_credentials,
             password,
         )
@@ -362,12 +408,12 @@ fn get_setup(args: &[String]) -> Setup {
         SessionConfig {
             user_agent: version::VERSION_STRING.to_string(),
             device_id,
-            proxy: matches.opt_str("proxy").or_else(|| std::env::var("http_proxy").ok()).map(
+            proxy: matches.opt_str(PROXY).or_else(|| std::env::var("http_proxy").ok()).map(
                 |s| {
                     match Url::parse(&s) {
                         Ok(url) => {
                             if url.host().is_none() || url.port_or_known_default().is_none() {
-                                panic!("Invalid proxy url, only urls on the format \"http://host:port\" are allowed");
+                                panic!("Invalid proxy url, only URLs on the format \"http://host:port\" are allowed");
                             }
 
                             if url.scheme() != "http" {
@@ -375,104 +421,112 @@ fn get_setup(args: &[String]) -> Setup {
                             }
                             url
                         },
-                    Err(err) => panic!("Invalid proxy url: {}, only urls on the format \"http://host:port\" are allowed", err)
+                        Err(err) => panic!("Invalid proxy URL: {}, only URLs in the format \"http://host:port\" are allowed", err)
                     }
                 },
             ),
             ap_port: matches
-                .opt_str("ap-port")
+                .opt_str(AP_PORT)
                 .map(|port| port.parse::<u16>().expect("Invalid port")),
         }
     };
 
-    let passthrough = matches.opt_present("passthrough") || matches.opt_present("pass-through");
+    let passthrough = matches.opt_present(PASSTHROUGH) || matches.opt_present(PASS_THROUGH);
 
     let player_config = {
         let bitrate = matches
-            .opt_str("b")
-            .as_ref()
+            .opt_str(BITRATE)
+            .as_deref()
             .map(|bitrate| Bitrate::from_str(bitrate).expect("Invalid bitrate"))
             .unwrap_or_default();
-        let gain_type = matches
-            .opt_str("normalisation-gain-type")
-            .as_ref()
+
+        let normalisation_type = matches
+            .opt_str(NORMALISATION_GAIN_TYPE)
+            .as_deref()
             .map(|gain_type| {
                 NormalisationType::from_str(gain_type).expect("Invalid normalisation type")
             })
             .unwrap_or_default();
 
+        let ditherer = PlayerConfig::default().ditherer;
+
         PlayerConfig {
             bitrate,
-            gapless: !matches.opt_present("disable-gapless"),
-            normalisation: matches.opt_present("enable-volume-normalisation"),
+            gapless: !matches.opt_present(DISABLE_GAPLESS),
+            passthrough,
+            normalisation: matches.opt_present(ENABLE_VOLUME_NORMALISATION),
+            normalisation_type,
             normalisation_method: NormalisationMethod::Basic,
-            normalisation_type: gain_type,
             normalisation_pregain: PlayerConfig::default().normalisation_pregain,
             normalisation_threshold: PlayerConfig::default().normalisation_threshold,
             normalisation_attack: PlayerConfig::default().normalisation_attack,
             normalisation_release: PlayerConfig::default().normalisation_release,
             normalisation_knee: PlayerConfig::default().normalisation_knee,
-            passthrough,
-            lms_connect_mode: !matches.opt_present("single-track"),
+            ditherer,
+            lms_connect_mode: !matches.opt_present(SINGLE_TRACK),
         }
     };
 
     let connect_config = {
+        let device_type = DeviceType::default();
+        let has_volume_ctrl = !matches!(mixer_config.volume_ctrl, VolumeCtrl::Fixed);
+        let autoplay = matches.opt_present(AUTOPLAY);
+
         ConnectConfig {
             name,
-            device_type: DeviceType::default(),
-            volume: initial_volume,
-            volume_ctrl: VolumeCtrl::default(),
-            autoplay: matches.opt_present("autoplay"),
+            device_type,
+            initial_volume,
+            has_volume_ctrl,
+            autoplay,
         }
     };
 
     // don't enable discovery while fetching tracks or tokens
-    let enable_discovery = !matches.opt_present("disable-discovery")
-        && !matches.opt_present("single-track")
-        && !matches.opt_present("save-token")
-        && !matches.opt_present("get-token");
+    let enable_discovery = !matches.opt_present(DISABLE_DISCOVERY)
+        && !matches.opt_present(SINGLE_TRACK)
+        && !matches.opt_present(SAVE_TOKEN)
+        && !matches.opt_present(GET_TOKEN);
 
-    let authenticate = matches.opt_present("authenticate");
-    let start_position = matches.opt_str("start-position")
+    let authenticate = matches.opt_present(AUTHENTICATE);
+    let start_position = matches.opt_str(START_POSITION)
         .unwrap_or("0".to_string())
         .parse::<f32>().unwrap_or(0.0);
 
-    let save_token = matches.opt_str("save-token").unwrap_or("".to_string());
-    let client_id = matches.opt_str("client-id")
+    let save_token = matches.opt_str(SAVE_TOKEN).unwrap_or("".to_string());
+    let client_id = matches.opt_str(CLIENT_ID)
         .unwrap_or(format!("{}", include_str!("client_id.txt")));
 
-    let lms = LMS::new(matches.opt_str("lms"), matches.opt_str("player-mac"), matches.opt_str("lms-auth"));
+    let lms = LMS::new(matches.opt_str(LOGITECH_MEDIA_SERVER), matches.opt_str(PLAYER_MAC), matches.opt_str(LMS_AUTH));
 
     Setup {
         format: AudioFormat::default(),
         backend: audio_backend::find(None).unwrap(),
+        mixer,
         cache,
-        session_config,
         player_config,
+        session_config,
         connect_config,
+        mixer_config,
         credentials,
-        device: None,
         enable_discovery,
         zeroconf_port,
-        mixer,
-        mixer_config,
         // spotty
         authenticate,
-        single_track: matches.opt_str("single-track"),
+        single_track: matches.opt_str(SINGLE_TRACK),
         start_position: (start_position * 1000.0) as u32,
-        get_token: matches.opt_present("get-token") || save_token.as_str().len() != 0,
+        get_token: matches.opt_present(GET_TOKEN) || save_token.as_str().len() != 0,
         save_token: if save_token.as_str().len() == 0 { None } else { Some(save_token) },
         client_id: if client_id.as_str().len() == 0 { None } else { Some(client_id) },
-        scopes: matches.opt_str("scope"),
-        lms
+        scopes: matches.opt_str(SCOPE),
+        lms,
     }
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    if env::var("RUST_BACKTRACE").is_err() {
-        env::set_var("RUST_BACKTRACE", "full")
+    const RUST_BACKTRACE: &str = "RUST_BACKTRACE";
+    if env::var(RUST_BACKTRACE).is_err() {
+        env::set_var(RUST_BACKTRACE, "full")
     }
 
     let args: Vec<String> = std::env::args().collect();
@@ -487,11 +541,14 @@ async fn main() {
     let mut connecting: Pin<Box<dyn future::FusedFuture<Output = _>>> = Box::pin(future::pending());
 
     if setup.enable_discovery {
-        let config = setup.connect_config.clone();
         let device_id = setup.session_config.device_id.clone();
 
         discovery = Some(
-            librespot_connect::discovery::discovery(config, device_id, setup.zeroconf_port)
+            librespot::discovery::Discovery::builder(device_id)
+                .name(setup.connect_config.name.clone())
+                .device_type(setup.connect_config.device_type)
+                .port(setup.zeroconf_port)
+                .launch()
                 .unwrap(),
         );
     }
@@ -553,7 +610,7 @@ async fn main() {
                     }
 
                     let mixer_config = setup.mixer_config.clone();
-                    let mixer = (setup.mixer)(Some(mixer_config));
+                    let mixer = (setup.mixer)(mixer_config);
                     let player_config = setup.player_config.clone();
                     let connect_config = setup.connect_config.clone();
 

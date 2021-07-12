@@ -1,6 +1,7 @@
 use super::{Open, Sink, SinkAsBytes};
-use crate::audio::AudioPacket;
 use crate::config::AudioFormat;
+use crate::convert::Converter;
+use crate::decoder::AudioPacket;
 use shell_words::split;
 
 use std::io::{self, Write};
@@ -60,4 +61,8 @@ impl SinkAsBytes for SubprocessSink {
         }
         Ok(())
     }
+}
+
+impl SubprocessSink {
+    pub const NAME: &'static str = "subprocess";
 }
