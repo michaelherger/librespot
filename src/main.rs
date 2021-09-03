@@ -344,7 +344,7 @@ fn get_setup(args: &[String]) -> Setup {
     let mixer = mixer::find(Some(SoftMixer::NAME).as_deref()).expect("Invalid mixer");
 
     let mixer_config = MixerConfig {
-        card: String::from("default"),
+        device: String::from("default"),
         control: String::from("PCM"),
         index: 0,
         volume_ctrl: VolumeCtrl::Linear,
