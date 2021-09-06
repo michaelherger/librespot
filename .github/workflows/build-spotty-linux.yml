@@ -1,4 +1,4 @@
-name: Build Spotty for Windows
+name: Build Spotty for Linux
 
 on: [workflow_dispatch]
 
@@ -8,11 +8,11 @@ env:
 
 jobs:
   build:
-    runs-on: windows-2019
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v1
 
     - name: Write Build Configuration File
       uses: DamianReeves/write-file-action@v1.0
@@ -22,10 +22,10 @@ jobs:
         write-mode: overwrite
 
     - name: Build
-      run: cargo build --release
+      run: ./xbuild.sh
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v2
       with:
-        name: spotty.exe
-        path: target/release/spotty.exe
+        name: spotty-linux
+        path: target/**/spotty
