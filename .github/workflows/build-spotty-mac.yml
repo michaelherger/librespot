@@ -1,4 +1,4 @@
-name: Build Spotty for Windows
+name: Build Spotty for macOS
 
 on: [workflow_dispatch]
 
@@ -8,9 +8,14 @@ env:
 
 jobs:
   build:
-    runs-on: windows-2019
+    runs-on: macos-10.15
 
     steps:
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: stable
+
     - name: Checkout
       uses: actions/checkout@v2
 
@@ -22,10 +27,10 @@ jobs:
         write-mode: overwrite
 
     - name: Build
-      run: cargo build --release
+      run: cargo build --release && strip target/release/spotty
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v2
       with:
-        name: spotty.exe
-        path: target/release/spotty.exe
+        name: spotty-mac
+        path: target/release/spotty
