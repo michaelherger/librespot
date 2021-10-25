@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-audio"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes-ctr",
  "byteorder",
@@ -1155,7 +1155,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-connect"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "form_urlencoded",
  "futures-util",
@@ -1174,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes",
  "base64",
@@ -1214,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-discovery"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes-ctr",
  "base64",
@@ -1239,7 +1239,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-metadata"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "byteorder",
@@ -1251,7 +1251,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-playback"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alsa",
  "byteorder",
@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-protocol"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "glob",
  "protobuf",
@@ -1875,9 +1875,9 @@ dependencies = [
 
 [[package]]
 name = "rand_distr"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "051b398806e42b9cd04ad9ec8f81e355d0a382c543ac6672c62f5a5b452ef142"
+checksum = "964d548f8e7d12e102ef183a0de7e98180c9f8729f555897a857b96e48122d2f"
 dependencies = [
  "num-traits 0.2.14",
  "rand",

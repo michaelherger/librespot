@@ -43,7 +43,8 @@ fn device_id(name: &str) -> String {
 }
 
 fn usage(program: &str, opts: &getopts::Options) -> String {
-    print_version();
+    println!("{}", get_version_string());
+
 
     let brief = format!("Usage: {} [options]", program);
     opts.usage(&brief)
@@ -95,15 +96,21 @@ pub fn get_credentials<F: FnOnce(&String) -> Option<String>>(
     }
 }
 
-fn print_version() {
-    println!(
-        "{spottyvers} - using librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id})",
+fn get_version_string() -> String {
+    #[cfg(debug_assertions)]
+    const BUILD_PROFILE: &str = "debug";
+    #[cfg(not(debug_assertions))]
+    const BUILD_PROFILE: &str = "release";
+
+    format!(
+        "{spottyvers} - using librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id}, Profile: {build_profile})",
         spottyvers = VERSION,
         semver = version::SEMVER,
         sha = version::SHA_SHORT,
         build_date = version::BUILD_DATE,
-        build_id = version::BUILD_ID
-    );
+        build_id = version::BUILD_ID,
+        build_profile = BUILD_PROFILE
+    )
 }
 
 struct Setup {
@@ -185,11 +192,11 @@ fn get_setup(args: &[String]) -> Setup {
     )
     .optflag("v", VERBOSE, "Enable verbose output.")
     .optflag("V", VERSION, "Display librespot version string.")
-    .optopt("u", USERNAME, "Username to sign in with.", "USERNAME")
-    .optopt("p", PASSWORD, "Password", "PASSWORD")
+    .optopt("u", USERNAME, "Username used to sign in with.", "USERNAME")
+    .optopt("p", PASSWORD, "Password used to sign in with.", "PASSWORD")
     .optopt("", PROXY, "HTTP proxy to use when connecting.", "URL")
-    .optopt("", AP_PORT, "Connect to AP with specified port. If no AP with that port are present fallback AP will be used. Available ports are usually 80, 443 and 4070.", "PORT")
-    .optflag("", DISABLE_DISCOVERY, "Disable discovery mode.")
+    .optopt("", AP_PORT, "Connect to an AP with a specified port. If no AP with that port is present a fallback AP will be used. Available ports are usually 80, 443 and 4070.", "PORT")
+    .optflag("", DISABLE_DISCOVERY, "Disable zeroconf discovery mode.")
     .optopt(
         "",
         INITIAL_VOLUME,
@@ -199,13 +206,13 @@ fn get_setup(args: &[String]) -> Setup {
     .optopt(
         "",
         ZEROCONF_PORT,
-        "The port the internal server advertised over zeroconf uses.",
+        "The port the internal server advertises over zeroconf.",
         "PORT",
     )
     .optflag(
         "",
         ENABLE_VOLUME_NORMALISATION,
-        "Play all tracks at the same volume.",
+        "Play all tracks at approximately the same apparent volume.",
     )
     .optopt(
         "",
@@ -226,7 +233,7 @@ fn get_setup(args: &[String]) -> Setup {
     .optflag(
         "",
         PASSTHROUGH,
-        "Pass raw stream to output, only works for \"pipe\"."
+        "Pass a raw stream to the output. Only works with the pipe and subprocess backends.",
     )
 
     // spotty
@@ -317,12 +324,12 @@ fn get_setup(args: &[String]) -> Setup {
     }
 
     if matches.opt_present(VERSION) {
-        print_version();
+        println!("{}", get_version_string());
         exit(0);
     }
 
     if matches.opt_present(CHECK) {
-        spotty::check();
+        spotty::check(get_version_string());
     }
 
 
@@ -332,14 +339,7 @@ fn get_setup(args: &[String]) -> Setup {
     setup_logging(verbose);
     }
 
-    info!(
-        "{spottyvers} - using librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id})",
-        spottyvers = VERSION,
-        semver = version::SEMVER,
-        sha = version::SHA_SHORT,
-        build_date = version::BUILD_DATE,
-        build_id = version::BUILD_ID
-    );
+    info!("{}", get_version_string());
 
     let mixer = mixer::find(Some(SoftMixer::NAME).as_deref()).expect("Invalid mixer");
 

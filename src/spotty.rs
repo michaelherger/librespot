@@ -11,7 +11,6 @@ use librespot::core::config::SessionConfig;
 use librespot::core::keymaster;
 use librespot::core::session::Session;
 use librespot::core::spotify_id::SpotifyId;
-use librespot::core::version;
 
 use librespot::playback::audio_backend;
 use librespot::playback::config::{
@@ -30,15 +29,8 @@ const DEBUGMODE: bool = true;
 #[cfg(not(debug_assertions))]
 const DEBUGMODE: bool = false;
 
-pub fn check() {
-    println!(
-        "ok {spottyvers} - using librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id})",
-        spottyvers = VERSION,
-        semver = version::SEMVER,
-        sha = version::SHA_SHORT,
-        build_date = version::BUILD_DATE,
-        build_id = version::BUILD_ID,
-    );
+pub fn check(version_info: String) {
+    println!("{}", version_info.to_string());
 
     let capabilities = json!({
         "version": env!("CARGO_PKG_VERSION").to_string(),
