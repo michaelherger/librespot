@@ -30,7 +30,7 @@ const DEBUGMODE: bool = true;
 const DEBUGMODE: bool = false;
 
 pub fn check(version_info: String) {
-    println!("{}", version_info.to_string());
+    println!("ok {}", version_info.to_string());
 
     let capabilities = json!({
         "version": env!("CARGO_PKG_VERSION").to_string(),
