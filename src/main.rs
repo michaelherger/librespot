@@ -351,11 +351,13 @@ fn get_setup(args: &[String]) -> Setup {
     };
 
     let cache = {
-        let system_dir: Option<String> = matches
-            .opt_str("c")
+        let volume_dir: Option<String> = matches
+            .opt_str(CACHE)
             .map(|p| p.into());
 
-        match Cache::new(system_dir, None, None) {
+        let cred_dir = volume_dir.clone();
+
+        match Cache::new(cred_dir, volume_dir, None, None) {
             Ok(cache) => Some(cache),
             Err(e) => {
                 warn!("Cannot create cache: {}", e);
