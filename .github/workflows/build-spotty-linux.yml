@@ -31,4 +31,4 @@ jobs:
       uses: actions/upload-artifact@v2
       with:
         name: spotty-linux
-        path: target/**/spotty
+        path: releases/
