@@ -21,7 +21,10 @@ jobs:
         contents: ${{ env.KEYMASTER_CLIENT_ID }}
         write-mode: overwrite
 
-    - name: Build
+    - name: Build ARMv7
+      run: docker run --rm -v $(pwd):/source dlecan/rust-crosscompiler-arm:stable
+
+    - name: Build other binaries (x86_64, i686, ARMv8)
       run: ./xbuild.sh
 
     - name: Upload artifacts
