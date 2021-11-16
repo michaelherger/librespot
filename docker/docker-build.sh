@@ -13,7 +13,7 @@ rm -f $DESTDIR/arm-linux/*
 function build {
 	echo Building for $1 to $3...
 
-	if [!-f /build/$1/release/spotty]; then
+	if [[ ! -f /build/$1/release/spotty ]]; then
 		cargo build --release --target $1
 	fi
 
