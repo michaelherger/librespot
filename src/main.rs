@@ -26,6 +26,7 @@ use spotty::{LMS};
 
 use std::env;
 use std::io::{stderr, Write};
+use std::path::Path;
 use std::pin::Pin;
 use std::process::exit;
 use std::str::FromStr;
@@ -51,7 +52,7 @@ fn usage(program: &str, opts: &getopts::Options) -> String {
 }
 
 #[cfg(debug_assertions)]
-fn setup_logging(verbose: bool) {
+fn setup_logging(quiet: bool, verbose: bool) {
     let mut builder = env_logger::Builder::new();
     match env::var("RUST_LOG") {
         Ok(config) => {
@@ -60,15 +61,23 @@ fn setup_logging(verbose: bool) {
 
             if verbose {
                 warn!("`--verbose` flag overidden by `RUST_LOG` environment variable");
+            } else if quiet {
+                warn!("`--quiet` flag overidden by `RUST_LOG` environment variable");
             }
         }
         Err(_) => {
             if verbose {
-                builder.parse_filters("libmdns=info,librespot=debug,spotty=trace");
+                builder.parse_filters("libmdns=info,librespot=trace,spotty=trace");
+            } else if quiet {
+                builder.parse_filters("libmdns=warn,librespot=warn,spotty=warn");
             } else {
                 builder.parse_filters("libmdns=info,librespot=info,spotty=info");
             }
             builder.init();
+
+            if verbose && quiet {
+                warn!("`--verbose` and `--quiet` are mutually exclusive. Logging can not be both verbose and quiet. Using verbose mode.");
+            }
         }
     }
 }
@@ -139,10 +148,10 @@ struct Setup {
 
 fn get_setup(args: &[String]) -> Setup {
     const AP_PORT: &str = "ap-port";
-    const AUTHENTICATE: &str = "a";
+    const AUTHENTICATE: &str = "authenticate";
     const AUTOPLAY: &str = "autoplay";
-    const BITRATE: &str = "b";
-    const CACHE: &str = "c";
+    const BITRATE: &str = "bitrate";
+    const CACHE: &str = "cache";
     const CHECK: &str = "check";
     const CLIENT_ID: &str = "client-id";
     const DISABLE_AUDIO_CACHE: &str = "disable-audio-cache";
@@ -151,7 +160,7 @@ fn get_setup(args: &[String]) -> Setup {
     const ENABLE_AUDIO_CACHE: &str = "enable-audio-cache";
     const ENABLE_VOLUME_NORMALISATION: &str = "enable-volume-normalisation";
     const GET_TOKEN: &str = "get-token";
-    const HELP: &str = "h";
+    const HELP: &str = "help";
     const INITIAL_VOLUME: &str = "initial-volume";
     const LMS_AUTH: &str = "lms-auth";
     const LOGITECH_MEDIA_SERVER: &str = "lms";
@@ -166,80 +175,164 @@ fn get_setup(args: &[String]) -> Setup {
     const SCOPE: &str = "scope";
     const SINGLE_TRACK: &str = "single-track";
     const START_POSITION: &str = "start-position";
+    const QUIET: &str = "quiet";
     const USERNAME: &str = "username";
     const VERBOSE: &str = "verbose";
     const VERSION: &str = "version";
     const ZEROCONF_PORT: &str = "zeroconf-port";
 
+    // Mostly arbitrary.
+    const AUTHENTICATE_SHORT: &str="a";
+    const AUTOPLAY_SHORT: &str = "A";
+    const AP_PORT_SHORT: &str = "";
+    const BITRATE_SHORT: &str = "b";
+    const CACHE_SHORT: &str = "c";
+    const DISABLE_AUDIO_CACHE_SHORT: &str = "G";
+    const ENABLE_AUDIO_CACHE_SHORT: &str = "";
+    const DISABLE_GAPLESS_SHORT: &str = "g";
+    const HELP_SHORT: &str = "h";
+    const CLIENT_ID_SHORT: &str = "i";
+    const ENABLE_VOLUME_NORMALISATION_SHORT: &str = "N";
+    const NAME_SHORT: &str = "n";
+    const DISABLE_DISCOVERY_SHORT: &str = "O";
+    const PASSTHROUGH_SHORT: &str = "P";
+    const PASSWORD_SHORT: &str = "p";
+    const QUIET_SHORT: &str = "q";
+    const INITIAL_VOLUME_SHORT: &str = "R";
+    const GET_TOKEN_SHORT: &str = "t";
+    const SAVE_TOKEN_SHORT: &str = "T";
+    const USERNAME_SHORT: &str = "u";
+    const VERSION_SHORT: &str = "V";
+    const VERBOSE_SHORT: &str = "v";
+    const NORMALISATION_GAIN_TYPE_SHORT: &str = "W";
+    const CHECK_SHORT: &str = "x";
+    const PROXY_SHORT: &str = "";
+    const ZEROCONF_PORT_SHORT: &str = "z";
+
+    // Options that have different desc's
+    // depending on what backends were enabled at build time.
+    const INITIAL_VOLUME_DESC: &str = "Initial volume in % from 0 - 100. Defaults to 50.";
+
     let mut opts = getopts::Options::new();
     opts.optflag(
+        HELP_SHORT,
         HELP,
-        "help",
         "Print this help menu.",
-    ).optopt(
-        CACHE,
-        "cache",
-        "Path to a directory where files will be cached.",
-        "PATH",
-    ).optflag("", DISABLE_AUDIO_CACHE, "(Only here fore compatibility with librespot - audio cache is disabled by default).")
-    .optflag("", ENABLE_AUDIO_CACHE, "Enable caching of the audio data.")
-    .optopt("n", NAME, "Device name", "NAME")
-    .optopt(
-        BITRATE,
-        "bitrate",
-        "Bitrate (96, 160 or 320). Defaults to 160",
-        "BITRATE",
-    )
-    .optflag("v", VERBOSE, "Enable verbose output.")
-    .optflag("V", VERSION, "Display librespot version string.")
-    .optopt("u", USERNAME, "Username used to sign in with.", "USERNAME")
-    .optopt("p", PASSWORD, "Password used to sign in with.", "PASSWORD")
-    .optopt("", PROXY, "HTTP proxy to use when connecting.", "URL")
-    .optopt("", AP_PORT, "Connect to an AP with a specified port. If no AP with that port is present a fallback AP will be used. Available ports are usually 80, 443 and 4070.", "PORT")
-    .optflag("", DISABLE_DISCOVERY, "Disable zeroconf discovery mode.")
-    .optopt(
-        "",
-        INITIAL_VOLUME,
-        "Initial volume (%) once connected {0..100}. Defaults to 50 for softvol and for Alsa mixer the current volume.",
-        "VOLUME",
-    )
-    .optopt(
-        "",
-        ZEROCONF_PORT,
-        "The port the internal server advertises over zeroconf.",
-        "PORT",
     )
     .optflag(
-        "",
+        VERSION_SHORT,
+        VERSION,
+        "Display librespot version string.",
+    )
+    .optflag(
+        VERBOSE_SHORT,
+        VERBOSE,
+        "Enable verbose log output.",
+    )
+    .optflag(
+        QUIET_SHORT,
+        QUIET,
+        "Only log warning and error messages.",
+    )
+    .optflag(
+        DISABLE_AUDIO_CACHE_SHORT,
+        DISABLE_AUDIO_CACHE,
+        "(Only here fore compatibility with librespot - audio cache is disabled by default).",
+    )
+    .optflag(
+        ENABLE_AUDIO_CACHE_SHORT,
+        ENABLE_AUDIO_CACHE,
+        "Enable caching of the audio data."
+    )
+    .optflag(
+        DISABLE_DISCOVERY_SHORT,
+        DISABLE_DISCOVERY,
+        "Disable zeroconf discovery mode.",
+    )
+    .optflag(
+        DISABLE_GAPLESS_SHORT,
+        DISABLE_GAPLESS,
+        "Disable gapless playback.",
+    )
+    .optflag(
+        AUTOPLAY_SHORT,
+        AUTOPLAY,
+        "Automatically play similar songs when your music ends.",
+    )
+    .optflag(
+        PASSTHROUGH_SHORT,
+        PASSTHROUGH,
+        "Pass a raw stream to the output. Only works with the pipe and subprocess backends.",
+    )
+    .optflag(
+        ENABLE_VOLUME_NORMALISATION_SHORT,
         ENABLE_VOLUME_NORMALISATION,
         "Play all tracks at approximately the same apparent volume.",
     )
     .optopt(
-        "",
+        NAME_SHORT,
+        NAME,
+        "Device name. Defaults to Spotty.",
+        "NAME",
+    )
+    .optopt(
+        BITRATE_SHORT,
+        BITRATE,
+        "Bitrate (kbps) {96|160|320}. Defaults to 160.",
+        "BITRATE",
+    )
+    .optopt(
+        CACHE_SHORT,
+        CACHE,
+        "Path to a directory where files will be cached.",
+        "PATH",
+    )
+    .optopt(
+        USERNAME_SHORT,
+        USERNAME,
+        "Username used to sign in with.",
+        "USERNAME",
+    )
+    .optopt(
+        PASSWORD_SHORT,
+        PASSWORD,
+        "Password used to sign in with.",
+        "PASSWORD",
+    )
+    .optopt(
+        INITIAL_VOLUME_SHORT,
+        INITIAL_VOLUME,
+        INITIAL_VOLUME_DESC,
+        "VOLUME",
+    )
+    .optopt(
+        NORMALISATION_GAIN_TYPE_SHORT,
         NORMALISATION_GAIN_TYPE,
         "Specify the normalisation gain type to use {track|album|auto}. Defaults to auto.",
         "TYPE",
     )
-    .optflag(
-        "",
-        AUTOPLAY,
-        "autoplay similar songs when your music ends.",
+    .optopt(
+        ZEROCONF_PORT_SHORT,
+        ZEROCONF_PORT,
+        "The port the internal server advertises over zeroconf 1 - 65535. Ports <= 1024 may require root privileges.",
+        "PORT",
     )
-    .optflag(
-        "",
-        DISABLE_GAPLESS,
-        "disable gapless playback.",
+    .optopt(
+        PROXY_SHORT,
+        PROXY,
+        "HTTP proxy to use when connecting.",
+        "URL",
     )
-    .optflag(
-        "",
-        PASSTHROUGH,
-        "Pass a raw stream to the output. Only works with the pipe and subprocess backends.",
+    .optopt(
+        AP_PORT_SHORT,
+        AP_PORT,
+        "Connect to an AP with a specified port 1 - 65535. If no AP with that port is present a fallback AP will be used. Available ports are usually 80, 443 and 4070.",
+        "PORT",
     )
-
     // spotty
     .optflag(
+        AUTHENTICATE_SHORT,
         AUTHENTICATE,
-        "authenticate",
         "Authenticate given username and password. Make sure you define a cache folder to store credentials."
     )
     .optopt(
@@ -255,12 +348,12 @@ fn get_setup(args: &[String]) -> Setup {
         "STARTPOSITION"
     )
     .optflag(
-        "x",
+        CHECK_SHORT,
         CHECK,
         "Run quick internal check"
     )
     .optopt(
-        "i",
+        CLIENT_ID_SHORT,
         CLIENT_ID,
         "A Spotify client_id to be used to get the oauth token. Required with the --get-token request.",
         "CLIENT_ID"
@@ -272,12 +365,12 @@ fn get_setup(args: &[String]) -> Setup {
         "SCOPE"
     )
     .optflag(
-        "t",
+        GET_TOKEN_SHORT,
         GET_TOKEN,
         "Get oauth token to be used with the web API etc. and print it to the console."
     )
     .optopt(
-        "T",
+        SAVE_TOKEN_SHORT,
         SAVE_TOKEN,
         "Get oauth token to be used with the web API etc. and store it in the given file.",
         "TOKENFILE"
@@ -332,32 +425,52 @@ fn get_setup(args: &[String]) -> Setup {
         spotty::check(get_version_string());
     }
 
-
     #[cfg(debug_assertions)]
-    {
-    let verbose = matches.opt_present(VERBOSE);
-    setup_logging(verbose);
-    }
+    setup_logging(matches.opt_present(QUIET), matches.opt_present(VERBOSE));
 
     info!("{}", get_version_string());
 
     let mixer = mixer::find(Some(SoftMixer::NAME).as_deref()).expect("Invalid mixer");
+    let mixer_type: Option<String> = None;
 
-    let mixer_config = MixerConfig {
-        device: String::from("default"),
-        control: String::from("PCM"),
-        index: 0,
-        volume_ctrl: VolumeCtrl::Linear,
+    let mixer_config = {
+        let mixer_default_config = MixerConfig::default();
+
+        let device = mixer_default_config.device;
+
+        let index = mixer_default_config.index;
+
+        let control = mixer_default_config.control;
+
+        let volume_ctrl = VolumeCtrl::Linear;
+
+        MixerConfig {
+            device,
+            control,
+            index,
+            volume_ctrl,
+        }
     };
 
     let cache = {
-        let volume_dir: Option<String> = matches
+        let volume_dir = matches
             .opt_str(CACHE)
             .map(|p| p.into());
 
         let cred_dir = volume_dir.clone();
 
-        match Cache::new(cred_dir, volume_dir, None, None) {
+        let audio_dir = if matches.opt_present(DISABLE_AUDIO_CACHE) {
+            None
+        } else {
+            matches
+                .opt_str(CACHE)
+                .as_ref()
+                .map(|p| AsRef::<Path>::as_ref(p).join("files"))
+        };
+
+        let limit = None;
+
+        match Cache::new(cred_dir, volume_dir, audio_dir, limit) {
             Ok(cache) => Some(cache),
             Err(e) => {
                 warn!("Cannot create cache: {}", e);
@@ -365,27 +478,6 @@ fn get_setup(args: &[String]) -> Setup {
             }
         }
     };
-
-    let initial_volume = matches
-        .opt_str(INITIAL_VOLUME)
-        .map(|initial_volume| {
-            let volume = initial_volume.parse::<u16>().unwrap();
-            if volume > 100 {
-                error!("Initial volume must be in the range 0-100.");
-                // the cast will saturate, not necessary to take further action
-            }
-            (volume as f32 / 100.0 * VolumeCtrl::MAX_VOLUME as f32) as u16
-        })
-        .or_else(|| cache.as_ref().and_then(Cache::volume));
-
-    let zeroconf_port = matches
-        .opt_str(ZEROCONF_PORT)
-        .map(|port| port.parse::<u16>().unwrap())
-        .unwrap_or(0);
-
-    let name = matches
-        .opt_str(NAME)
-        .unwrap_or_else(|| "Spotty".to_string());
 
     let credentials = {
         let cached_credentials = cache.as_ref().and_then(Cache::credentials);
@@ -404,72 +496,97 @@ fn get_setup(args: &[String]) -> Setup {
         )
     };
 
-    let session_config = {
-        let device_id = device_id(&name);
+    // don't enable discovery while fetching tracks or tokens
+    let enable_discovery = !matches.opt_present(DISABLE_DISCOVERY)
+        && !matches.opt_present(SINGLE_TRACK)
+        && !matches.opt_present(SAVE_TOKEN)
+        && !matches.opt_present(GET_TOKEN);
 
-        SessionConfig {
-            user_agent: version::VERSION_STRING.to_string(),
-            device_id,
-            proxy: matches.opt_str(PROXY).or_else(|| std::env::var("http_proxy").ok()).map(
-                |s| {
-                    match Url::parse(&s) {
-                        Ok(url) => {
-                            if url.host().is_none() || url.port_or_known_default().is_none() {
-                                panic!("Invalid proxy url, only URLs on the format \"http://host:port\" are allowed");
-                            }
+    if credentials.is_none() && !enable_discovery {
+        error!("Credentials are required if discovery is disabled.");
+        exit(1);
+    }
 
-                            if url.scheme() != "http" {
-                                panic!("Only unsecure http:// proxies are supported");
-                            }
-                            url
-                        },
-                        Err(err) => panic!("Invalid proxy URL: {}, only URLs in the format \"http://host:port\" are allowed", err)
-                    }
-                },
-            ),
-            ap_port: matches
-                .opt_str(AP_PORT)
-                .map(|port| port.parse::<u16>().expect("Invalid port")),
-        }
-    };
+    if !enable_discovery && matches.opt_present(ZEROCONF_PORT) {
+        warn!(
+            "With the `--{}` / `-{}` flag set `--{}` / `-{}` has no effect.",
+            DISABLE_DISCOVERY, DISABLE_DISCOVERY_SHORT, ZEROCONF_PORT, ZEROCONF_PORT_SHORT
+        );
+    }
 
-    let passthrough = matches.opt_present(PASSTHROUGH) || matches.opt_present(PASS_THROUGH);
+    let zeroconf_port = if enable_discovery {
+        matches
+            .opt_str(ZEROCONF_PORT)
+            .map(|port| {
+                let on_error = || {
+                    error!(
+                        "Invalid `--{}` / `-{}`: {}",
+                        ZEROCONF_PORT, ZEROCONF_PORT_SHORT, port
+                    );
+                    println!(
+                        "Valid `--{}` / `-{}` values: 1 - 65535",
+                        ZEROCONF_PORT, ZEROCONF_PORT_SHORT
+                    );
+                };
 
-    let player_config = {
-        let bitrate = matches
-            .opt_str(BITRATE)
-            .as_deref()
-            .map(|bitrate| Bitrate::from_str(bitrate).expect("Invalid bitrate"))
-            .unwrap_or_default();
+                let port = port.parse::<u16>().unwrap_or_else(|_| {
+                    on_error();
+                    exit(1);
+                });
 
-        let normalisation_type = matches
-            .opt_str(NORMALISATION_GAIN_TYPE)
-            .as_deref()
-            .map(|gain_type| {
-                NormalisationType::from_str(gain_type).expect("Invalid normalisation type")
+                if port == 0 {
+                    on_error();
+                    exit(1);
+                }
+
+                port
             })
-            .unwrap_or_default();
-
-        let ditherer = PlayerConfig::default().ditherer;
-
-        PlayerConfig {
-            bitrate,
-            gapless: !matches.opt_present(DISABLE_GAPLESS),
-            passthrough,
-            normalisation: matches.opt_present(ENABLE_VOLUME_NORMALISATION),
-            normalisation_type,
-            normalisation_method: NormalisationMethod::Basic,
-            normalisation_pregain: PlayerConfig::default().normalisation_pregain,
-            normalisation_threshold: PlayerConfig::default().normalisation_threshold,
-            normalisation_attack: PlayerConfig::default().normalisation_attack,
-            normalisation_release: PlayerConfig::default().normalisation_release,
-            normalisation_knee: PlayerConfig::default().normalisation_knee,
-            ditherer,
-            lms_connect_mode: !matches.opt_present(SINGLE_TRACK),
-        }
+            .unwrap_or(0)
+    } else {
+        0
     };
 
     let connect_config = {
+        let connect_default_config = ConnectConfig::default();
+
+        let name = matches
+            .opt_str(NAME)
+            .unwrap_or_else(|| connect_default_config.name.clone());
+
+        let initial_volume = matches
+            .opt_str(INITIAL_VOLUME)
+            .map(|initial_volume| {
+                let on_error = || {
+                    error!(
+                        "Invalid `--{}` / `-{}`: {}",
+                        INITIAL_VOLUME, INITIAL_VOLUME_SHORT, initial_volume
+                    );
+                    println!(
+                        "Valid `--{}` / `-{}` values: 0 - 100",
+                        INITIAL_VOLUME, INITIAL_VOLUME_SHORT
+                    );
+                    println!(
+                        "Default: {}",
+                        connect_default_config.initial_volume.unwrap_or_default()
+                    );
+                };
+
+                let volume = initial_volume.parse::<u16>().unwrap_or_else(|_| {
+                    on_error();
+                    exit(1);
+                });
+
+                if volume > 100 {
+                    on_error();
+                    exit(1);
+                }
+
+                (volume as f32 / 100.0 * VolumeCtrl::MAX_VOLUME as f32) as u16
+            })
+            .or_else(|| match mixer_type.as_deref() {
+                _ => cache.as_ref().and_then(Cache::volume),
+            });
+
         let device_type = DeviceType::default();
         let has_volume_ctrl = !matches!(mixer_config.volume_ctrl, VolumeCtrl::Fixed);
         let autoplay = matches.opt_present(AUTOPLAY);
@@ -483,11 +600,141 @@ fn get_setup(args: &[String]) -> Setup {
         }
     };
 
-    // don't enable discovery while fetching tracks or tokens
-    let enable_discovery = !matches.opt_present(DISABLE_DISCOVERY)
-        && !matches.opt_present(SINGLE_TRACK)
-        && !matches.opt_present(SAVE_TOKEN)
-        && !matches.opt_present(GET_TOKEN);
+    let session_config = {
+        let device_id = device_id(&connect_config.name);
+
+        SessionConfig {
+            user_agent: version::VERSION_STRING.to_string(),
+            device_id,
+            proxy: matches.opt_str(PROXY).or_else(|| std::env::var("http_proxy").ok()).map(
+                |s| {
+                    match Url::parse(&s) {
+                        Ok(url) => {
+                            if url.host().is_none() || url.port_or_known_default().is_none() {
+                                error!("Invalid proxy url, only URLs on the format \"http://host:port\" are allowed");
+                                exit(1);
+                            }
+
+                            if url.scheme() != "http" {
+                                error!("Only unsecure http:// proxies are supported");
+                                exit(1);
+                            }
+
+                            url
+                        },
+                        Err(e) => {
+                            error!("Invalid proxy URL: {}, only URLs in the format \"http://host:port\" are allowed", e);
+                            exit(1);
+                        }
+                    }
+                },
+            ),
+            ap_port: matches
+                .opt_str(AP_PORT)
+                .map(|port| {
+                    let on_error = || {
+                        error!("Invalid `--{}` / `-{}`: {}", AP_PORT, AP_PORT_SHORT, port);
+                        println!("Valid `--{}` / `-{}` values: 1 - 65535", AP_PORT, AP_PORT_SHORT);
+                    };
+
+                    let port = port.parse::<u16>().unwrap_or_else(|_| {
+                        on_error();
+                        exit(1);
+                    });
+
+                    if port == 0 {
+                        on_error();
+                        exit(1);
+                    }
+
+                    port
+                }),
+        }
+    };
+
+    let passthrough = matches.opt_present(PASSTHROUGH) || matches.opt_present(PASS_THROUGH);
+
+    let player_config = {
+        let player_default_config = PlayerConfig::default();
+
+        let bitrate = matches
+            .opt_str(BITRATE)
+            .as_deref()
+            .map(|bitrate| {
+                Bitrate::from_str(bitrate).unwrap_or_else(|_| {
+                    error!(
+                        "Invalid `--{}` / `-{}`: {}",
+                        BITRATE, BITRATE_SHORT, bitrate
+                    );
+                    println!(
+                        "Valid `--{}` / `-{}` values: 96, 160, 320",
+                        BITRATE, BITRATE_SHORT
+                    );
+                    println!("Default: 160");
+                    exit(1);
+                })
+            })
+            .unwrap_or(player_default_config.bitrate);
+
+        let gapless = !matches.opt_present(DISABLE_GAPLESS);
+
+        let normalisation = matches.opt_present(ENABLE_VOLUME_NORMALISATION);
+
+        let normalisation_type;
+
+        if !normalisation {
+            for a in &[
+                NORMALISATION_GAIN_TYPE,
+            ] {
+                if matches.opt_present(a) {
+                    warn!(
+                        "Without the `--{}` / `-{}` flag normalisation options have no effect.",
+                        ENABLE_VOLUME_NORMALISATION, ENABLE_VOLUME_NORMALISATION_SHORT,
+                    );
+                    break;
+                }
+            }
+
+            normalisation_type = player_default_config.normalisation_type;
+        } else {
+            normalisation_type = matches
+                .opt_str(NORMALISATION_GAIN_TYPE)
+                .as_deref()
+                .map(|gain_type| {
+                    NormalisationType::from_str(gain_type).unwrap_or_else(|_| {
+                        error!(
+                            "Invalid `--{}` / `-{}`: {}",
+                            NORMALISATION_GAIN_TYPE, NORMALISATION_GAIN_TYPE_SHORT, gain_type
+                        );
+                        println!(
+                            "Valid `--{}` / `-{}` values: track, album, auto",
+                            NORMALISATION_GAIN_TYPE, NORMALISATION_GAIN_TYPE_SHORT,
+                        );
+                        println!("Default: {:?}", player_default_config.normalisation_type);
+                        exit(1);
+                    })
+                })
+                .unwrap_or(player_default_config.normalisation_type);
+        }
+
+        let ditherer = PlayerConfig::default().ditherer;
+
+        PlayerConfig {
+            bitrate,
+            gapless,
+            passthrough,
+            normalisation,
+            normalisation_type,
+            normalisation_method: NormalisationMethod::Basic,
+            normalisation_pregain: PlayerConfig::default().normalisation_pregain,
+            normalisation_threshold: PlayerConfig::default().normalisation_threshold,
+            normalisation_attack: PlayerConfig::default().normalisation_attack,
+            normalisation_release: PlayerConfig::default().normalisation_release,
+            normalisation_knee: PlayerConfig::default().normalisation_knee,
+            ditherer,
+            lms_connect_mode: !matches.opt_present(SINGLE_TRACK),
+        }
+    };
 
     let authenticate = matches.opt_present(AUTHENTICATE);
     let start_position = matches.opt_str(START_POSITION)
@@ -632,7 +879,8 @@ async fn main() {
                     player_event_channel = Some(event_channel);
                 },
                 Err(e) => {
-                    warn!("Connection failed: {}", e);
+                    error!("Connection failed: {}", e);
+                    exit(1);
                 }
             },
             _ = async { spirc_task.as_mut().unwrap().await }, if spirc_task.is_some() => {
