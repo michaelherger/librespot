@@ -2,7 +2,7 @@
 
 use futures_util::{future, FutureExt, StreamExt};
 use librespot_playback::player::PlayerEvent;
-use log::{error, info, warn};
+use log::{error, info, trace, warn};
 use sha1::{Digest, Sha1};
 use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
@@ -49,6 +49,23 @@ fn usage(program: &str, opts: &getopts::Options) -> String {
 
     let brief = format!("Usage: {} [options]", program);
     opts.usage(&brief)
+}
+
+fn arg_to_var(arg: &str) -> String {
+    // To avoid name collisions environment variables must be prepended
+    // with `LIBRESPOT_` so option/flag `foo-bar` becomes `LIBRESPOT_FOO_BAR`.
+    format!("LIBRESPOT_{}", arg.to_uppercase().replace("-", "_"))
+}
+
+fn env_var_present(arg: &str) -> bool {
+    env::var(arg_to_var(arg)).is_ok()
+}
+
+fn env_var_opt_str(option: &str) -> Option<String> {
+    match env::var(arg_to_var(option)) {
+        Ok(value) => Some(value),
+        Err(_) => None,
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -411,24 +428,88 @@ fn get_setup(args: &[String]) -> Setup {
         }
     };
 
-    if matches.opt_present(HELP) {
+    let opt_present = |opt| matches.opt_present(opt) || env_var_present(opt);
+
+    let opt_str = |opt| {
+        if matches.opt_present(opt) {
+            matches.opt_str(opt)
+        } else {
+            env_var_opt_str(opt)
+        }
+    };
+
+    if opt_present(HELP) {
         println!("{}", usage(&args[0], &opts));
         exit(0);
     }
 
-    if matches.opt_present(VERSION) {
+    if opt_present(VERSION) {
         println!("{}", get_version_string());
         exit(0);
     }
 
-    if matches.opt_present(CHECK) {
+    if opt_present(CHECK) {
         spotty::check(get_version_string());
     }
 
     #[cfg(debug_assertions)]
-    setup_logging(matches.opt_present(QUIET), matches.opt_present(VERBOSE));
+    setup_logging(opt_present(QUIET), opt_present(VERBOSE));
 
     info!("{}", get_version_string());
+
+    let librespot_env_vars: Vec<String> = env::vars_os()
+        .filter_map(|(k, v)| {
+            let mut env_var = None;
+            if let Some(key) = k.to_str() {
+                if key.starts_with("LIBRESPOT_") {
+                    if matches!(key, "LIBRESPOT_PASSWORD" | "LIBRESPOT_USERNAME") {
+                        // Don't log creds.
+                        env_var = Some(format!("\t\t{}=XXXXXXXX", key));
+                    } else if let Some(value) = v.to_str() {
+                        env_var = Some(format!("\t\t{}={}", key, value));
+                    }
+                }
+            }
+
+            env_var
+        })
+        .collect();
+
+    if !librespot_env_vars.is_empty() {
+        trace!("Environment variable(s):");
+
+        for kv in librespot_env_vars {
+            trace!("{}", kv);
+        }
+    }
+
+    let cmd_args = &args[1..];
+
+    let cmd_args_len = cmd_args.len();
+
+    if cmd_args_len > 0 {
+        trace!("Command line argument(s):");
+
+        for (index, key) in cmd_args.iter().enumerate() {
+            if key.starts_with('-') || key.starts_with("--") {
+                if matches!(key.as_str(), "--password" | "-p" | "--username" | "-u") {
+                    // Don't log creds.
+                    trace!("\t\t{} XXXXXXXX", key);
+                } else {
+                    let mut value = "".to_string();
+                    let next = index + 1;
+                    if next < cmd_args_len {
+                        let next_key = cmd_args[next].clone();
+                        if !next_key.starts_with('-') && !next_key.starts_with("--") {
+                            value = next_key;
+                        }
+                    }
+
+                    trace!("\t\t{} {}", key, value);
+                }
+            }
+        }
+    }
 
     let mixer = mixer::find(Some(SoftMixer::NAME).as_deref()).expect("Invalid mixer");
     let mixer_type: Option<String> = None;
@@ -453,17 +534,15 @@ fn get_setup(args: &[String]) -> Setup {
     };
 
     let cache = {
-        let volume_dir = matches
-            .opt_str(CACHE)
+        let volume_dir = opt_str(CACHE)
             .map(|p| p.into());
 
         let cred_dir = volume_dir.clone();
 
-        let audio_dir = if matches.opt_present(DISABLE_AUDIO_CACHE) {
+        let audio_dir = if opt_present(DISABLE_AUDIO_CACHE) {
             None
         } else {
-            matches
-                .opt_str(CACHE)
+            opt_str(CACHE)
                 .as_ref()
                 .map(|p| AsRef::<Path>::as_ref(p).join("files"))
         };
@@ -489,25 +568,25 @@ fn get_setup(args: &[String]) -> Setup {
         };
 
         get_credentials(
-            matches.opt_str(USERNAME),
-            matches.opt_str(PASSWORD),
+            opt_str(USERNAME),
+            opt_str(PASSWORD),
             cached_credentials,
             password,
         )
     };
 
     // don't enable discovery while fetching tracks or tokens
-    let enable_discovery = !matches.opt_present(DISABLE_DISCOVERY)
-        && !matches.opt_present(SINGLE_TRACK)
-        && !matches.opt_present(SAVE_TOKEN)
-        && !matches.opt_present(GET_TOKEN);
+    let enable_discovery = !opt_present(DISABLE_DISCOVERY)
+        && !opt_present(SINGLE_TRACK)
+        && !opt_present(SAVE_TOKEN)
+        && !opt_present(GET_TOKEN);
 
     if credentials.is_none() && !enable_discovery {
         error!("Credentials are required if discovery is disabled.");
         exit(1);
     }
 
-    if !enable_discovery && matches.opt_present(ZEROCONF_PORT) {
+    if !enable_discovery && opt_present(ZEROCONF_PORT) {
         warn!(
             "With the `--{}` / `-{}` flag set `--{}` / `-{}` has no effect.",
             DISABLE_DISCOVERY, DISABLE_DISCOVERY_SHORT, ZEROCONF_PORT, ZEROCONF_PORT_SHORT
@@ -515,8 +594,7 @@ fn get_setup(args: &[String]) -> Setup {
     }
 
     let zeroconf_port = if enable_discovery {
-        matches
-            .opt_str(ZEROCONF_PORT)
+        opt_str(ZEROCONF_PORT)
             .map(|port| {
                 let on_error = || {
                     error!(
@@ -549,12 +627,9 @@ fn get_setup(args: &[String]) -> Setup {
     let connect_config = {
         let connect_default_config = ConnectConfig::default();
 
-        let name = matches
-            .opt_str(NAME)
-            .unwrap_or_else(|| connect_default_config.name.clone());
+        let name = opt_str(NAME).unwrap_or_else(|| connect_default_config.name.clone());
 
-        let initial_volume = matches
-            .opt_str(INITIAL_VOLUME)
+        let initial_volume = opt_str(INITIAL_VOLUME)
             .map(|initial_volume| {
                 let on_error = || {
                     error!(
@@ -589,7 +664,7 @@ fn get_setup(args: &[String]) -> Setup {
 
         let device_type = DeviceType::default();
         let has_volume_ctrl = !matches!(mixer_config.volume_ctrl, VolumeCtrl::Fixed);
-        let autoplay = matches.opt_present(AUTOPLAY);
+        let autoplay = opt_present(AUTOPLAY);
 
         ConnectConfig {
             name,
@@ -606,7 +681,7 @@ fn get_setup(args: &[String]) -> Setup {
         SessionConfig {
             user_agent: version::VERSION_STRING.to_string(),
             device_id,
-            proxy: matches.opt_str(PROXY).or_else(|| std::env::var("http_proxy").ok()).map(
+            proxy: opt_str(PROXY).or_else(|| std::env::var("http_proxy").ok()).map(
                 |s| {
                     match Url::parse(&s) {
                         Ok(url) => {
@@ -629,8 +704,7 @@ fn get_setup(args: &[String]) -> Setup {
                     }
                 },
             ),
-            ap_port: matches
-                .opt_str(AP_PORT)
+            ap_port: opt_str(AP_PORT)
                 .map(|port| {
                     let on_error = || {
                         error!("Invalid `--{}` / `-{}`: {}", AP_PORT, AP_PORT_SHORT, port);
@@ -652,13 +726,12 @@ fn get_setup(args: &[String]) -> Setup {
         }
     };
 
-    let passthrough = matches.opt_present(PASSTHROUGH) || matches.opt_present(PASS_THROUGH);
+    let passthrough = opt_present(PASSTHROUGH) || opt_present(PASS_THROUGH);
 
     let player_config = {
         let player_default_config = PlayerConfig::default();
 
-        let bitrate = matches
-            .opt_str(BITRATE)
+        let bitrate = opt_str(BITRATE)
             .as_deref()
             .map(|bitrate| {
                 Bitrate::from_str(bitrate).unwrap_or_else(|_| {
@@ -676,9 +749,9 @@ fn get_setup(args: &[String]) -> Setup {
             })
             .unwrap_or(player_default_config.bitrate);
 
-        let gapless = !matches.opt_present(DISABLE_GAPLESS);
+        let gapless = !opt_present(DISABLE_GAPLESS);
 
-        let normalisation = matches.opt_present(ENABLE_VOLUME_NORMALISATION);
+        let normalisation = opt_present(ENABLE_VOLUME_NORMALISATION);
 
         let normalisation_type;
 
@@ -686,7 +759,7 @@ fn get_setup(args: &[String]) -> Setup {
             for a in &[
                 NORMALISATION_GAIN_TYPE,
             ] {
-                if matches.opt_present(a) {
+                if opt_present(a) {
                     warn!(
                         "Without the `--{}` / `-{}` flag normalisation options have no effect.",
                         ENABLE_VOLUME_NORMALISATION, ENABLE_VOLUME_NORMALISATION_SHORT,
@@ -697,8 +770,7 @@ fn get_setup(args: &[String]) -> Setup {
 
             normalisation_type = player_default_config.normalisation_type;
         } else {
-            normalisation_type = matches
-                .opt_str(NORMALISATION_GAIN_TYPE)
+            normalisation_type = opt_str(NORMALISATION_GAIN_TYPE)
                 .as_deref()
                 .map(|gain_type| {
                     NormalisationType::from_str(gain_type).unwrap_or_else(|_| {
@@ -732,20 +804,20 @@ fn get_setup(args: &[String]) -> Setup {
             normalisation_release: PlayerConfig::default().normalisation_release,
             normalisation_knee: PlayerConfig::default().normalisation_knee,
             ditherer,
-            lms_connect_mode: !matches.opt_present(SINGLE_TRACK),
+            lms_connect_mode: !opt_present(SINGLE_TRACK),
         }
     };
 
-    let authenticate = matches.opt_present(AUTHENTICATE);
-    let start_position = matches.opt_str(START_POSITION)
+    let authenticate = opt_present(AUTHENTICATE);
+    let start_position = opt_str(START_POSITION)
         .unwrap_or("0".to_string())
         .parse::<f32>().unwrap_or(0.0);
 
-    let save_token = matches.opt_str(SAVE_TOKEN).unwrap_or("".to_string());
-    let client_id = matches.opt_str(CLIENT_ID)
+    let save_token = opt_str(SAVE_TOKEN).unwrap_or("".to_string());
+    let client_id = opt_str(CLIENT_ID)
         .unwrap_or(format!("{}", include_str!("client_id.txt")));
 
-    let lms = LMS::new(matches.opt_str(LOGITECH_MEDIA_SERVER), matches.opt_str(PLAYER_MAC), matches.opt_str(LMS_AUTH));
+    let lms = LMS::new(opt_str(LOGITECH_MEDIA_SERVER), opt_str(PLAYER_MAC), opt_str(LMS_AUTH));
 
     Setup {
         format: AudioFormat::default(),
@@ -761,12 +833,12 @@ fn get_setup(args: &[String]) -> Setup {
         zeroconf_port,
         // spotty
         authenticate,
-        single_track: matches.opt_str(SINGLE_TRACK),
+        single_track: opt_str(SINGLE_TRACK),
         start_position: (start_position * 1000.0) as u32,
-        get_token: matches.opt_present(GET_TOKEN) || save_token.as_str().len() != 0,
+        get_token: opt_present(GET_TOKEN) || save_token.as_str().len() != 0,
         save_token: if save_token.as_str().len() == 0 { None } else { Some(save_token) },
         client_id: if client_id.as_str().len() == 0 { None } else { Some(client_id) },
-        scopes: matches.opt_str(SCOPE),
+        scopes: opt_str(SCOPE),
         lms,
     }
 }
