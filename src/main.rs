@@ -54,6 +54,7 @@ fn usage(program: &str, opts: &getopts::Options) -> String {
     opts.usage(&brief)
 }
 
+#[cfg(debug_assertions)]
 fn setup_logging(quiet: bool, verbose: bool) {
     let mut builder = env_logger::Builder::new();
     match env::var("RUST_LOG") {
