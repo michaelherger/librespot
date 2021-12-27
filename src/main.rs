@@ -947,6 +947,7 @@ async fn main() {
                 Ok(session) => {
                     // Spotty auth mode: exit after saving credentials
                     if setup.authenticate {
+                        println!("authorized");
                         break;
                     }
 
