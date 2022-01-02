@@ -1,6 +1,9 @@
 name: Build Spotty for all platforms
 
-on: [workflow_dispatch]
+on:
+  push:
+    branches: [spotty, spotty-dev]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
