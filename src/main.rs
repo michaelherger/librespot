@@ -1,4 +1,5 @@
-#[macro_use] extern crate serde_json;
+#[macro_use]
+extern crate serde_json;
 
 use futures_util::{future, FutureExt, StreamExt};
 use librespot_playback::player::PlayerEvent;
@@ -17,12 +18,12 @@ use librespot::playback::audio_backend::{self, SinkBuilder};
 use librespot::playback::config::{
     AudioFormat, Bitrate, NormalisationMethod, NormalisationType, PlayerConfig, VolumeCtrl,
 };
-use librespot::playback::mixer::{self, MixerConfig, MixerFn};
 use librespot::playback::mixer::softmixer::SoftMixer;
+use librespot::playback::mixer::{self, MixerConfig, MixerFn};
 use librespot::playback::player::Player;
 
 mod spotty;
-use spotty::{LMS};
+use spotty::LMS;
 
 use std::env;
 use std::ops::RangeInclusive;
@@ -35,9 +36,9 @@ use std::time::Instant;
 
 const VERSION: &'static str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
-#[cfg(target_os="windows")]
+#[cfg(target_os = "windows")]
 const NULLDEVICE: &'static str = "NUL";
-#[cfg(not(target_os="windows"))]
+#[cfg(not(target_os = "windows"))]
 const NULLDEVICE: &'static str = "/dev/null";
 
 fn device_id(name: &str) -> String {
@@ -118,7 +119,7 @@ struct Setup {
 
     // spotty
     authenticate: bool,
-    single_track:  Option<String>,
+    single_track: Option<String>,
     start_position: u32,
     client_id: Option<String>,
     scopes: Option<String>,
@@ -164,7 +165,7 @@ fn get_setup() -> Setup {
     const ZEROCONF_PORT: &str = "zeroconf-port";
 
     // Mostly arbitrary.
-    const AUTHENTICATE_SHORT: &str="a";
+    const AUTHENTICATE_SHORT: &str = "a";
     const AUTOPLAY_SHORT: &str = "A";
     const AP_PORT_SHORT: &str = "";
     const BITRATE_SHORT: &str = "b";
@@ -505,17 +506,17 @@ fn get_setup() -> Setup {
     }
 
     let invalid_error_msg =
-    |long: &str, short: &str, invalid: &str, valid_values: &str, default_value: &str| {
-        error!("Invalid `--{}` / `-{}`: \"{}\"", long, short, invalid);
+        |long: &str, short: &str, invalid: &str, valid_values: &str, default_value: &str| {
+            error!("Invalid `--{}` / `-{}`: \"{}\"", long, short, invalid);
 
-        if !valid_values.is_empty() {
-            println!("Valid `--{}` / `-{}` values: {}", long, short, valid_values);
-        }
+            if !valid_values.is_empty() {
+                println!("Valid `--{}` / `-{}` values: {}", long, short, valid_values);
+            }
 
-        if !default_value.is_empty() {
-            println!("Default: {}", default_value);
-        }
-    };
+            if !default_value.is_empty() {
+                println!("Default: {}", default_value);
+            }
+        };
 
     let empty_string_error_msg = |long: &str, short: &str| {
         error!("`--{}` / `-{}` can not be an empty string", long, short);
@@ -545,8 +546,7 @@ fn get_setup() -> Setup {
     };
 
     let cache = {
-        let volume_dir = opt_str(CACHE)
-            .map(|p| p.into());
+        let volume_dir = opt_str(CACHE).map(|p| p.into());
 
         let cred_dir = volume_dir.clone();
 
@@ -765,9 +765,7 @@ fn get_setup() -> Setup {
         let normalisation_type;
 
         if !normalisation {
-            for a in &[
-                NORMALISATION_GAIN_TYPE,
-            ] {
+            for a in &[NORMALISATION_GAIN_TYPE] {
                 if opt_present(a) {
                     warn!(
                         "Without the `--{}` / `-{}` flag normalisation options have no effect.",
@@ -820,13 +818,17 @@ fn get_setup() -> Setup {
     let authenticate = opt_present(AUTHENTICATE);
     let start_position = opt_str(START_POSITION)
         .unwrap_or("0".to_string())
-        .parse::<f32>().unwrap_or(0.0);
+        .parse::<f32>()
+        .unwrap_or(0.0);
 
     let save_token = opt_str(SAVE_TOKEN).unwrap_or("".to_string());
-    let client_id = opt_str(CLIENT_ID)
-        .unwrap_or(format!("{}", include_str!("client_id.txt")));
+    let client_id = opt_str(CLIENT_ID).unwrap_or(format!("{}", include_str!("client_id.txt")));
 
-    let lms = LMS::new(opt_str(LOGITECH_MEDIA_SERVER), opt_str(PLAYER_MAC), opt_str(LMS_AUTH));
+    let lms = LMS::new(
+        opt_str(LOGITECH_MEDIA_SERVER),
+        opt_str(PLAYER_MAC),
+        opt_str(LMS_AUTH),
+    );
 
     Setup {
         format: AudioFormat::default(),
@@ -845,8 +847,16 @@ fn get_setup() -> Setup {
         single_track: opt_str(SINGLE_TRACK),
         start_position: (start_position * 1000.0) as u32,
         get_token: opt_present(GET_TOKEN) || save_token.as_str().len() != 0,
-        save_token: if save_token.as_str().len() == 0 { None } else { Some(save_token) },
-        client_id: if client_id.as_str().len() == 0 { None } else { Some(client_id) },
+        save_token: if save_token.as_str().len() == 0 {
+            None
+        } else {
+            Some(save_token)
+        },
+        client_id: if client_id.as_str().len() == 0 {
+            None
+        } else {
+            Some(client_id)
+        },
         scopes: opt_str(SCOPE),
         lms,
     }
@@ -902,11 +912,24 @@ async fn main() {
     }
 
     if let Some(ref track_id) = setup.single_track {
-        spotty::play_track(track_id.to_string(), setup.start_position, last_credentials, setup.player_config, setup.session_config).await;
+        spotty::play_track(
+            track_id.to_string(),
+            setup.start_position,
+            last_credentials,
+            setup.player_config,
+            setup.session_config,
+        )
+        .await;
         exit(0);
-    }
-    else if setup.get_token {
-        spotty::get_token(setup.client_id, setup.scopes, setup.save_token, last_credentials, setup.session_config).await;
+    } else if setup.get_token {
+        spotty::get_token(
+            setup.client_id,
+            setup.scopes,
+            setup.save_token,
+            last_credentials,
+            setup.session_config,
+        )
+        .await;
         exit(0);
     }
 

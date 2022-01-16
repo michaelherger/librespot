@@ -1,6 +1,6 @@
+use hyper::{Body, Client, Method, Request};
 #[allow(unused)]
 use log::{info, warn};
-use hyper::{Body, Client, Method, Request};
 
 use serde_json::json;
 use std::fs;
@@ -13,12 +13,8 @@ use librespot::core::session::Session;
 use librespot::core::spotify_id::SpotifyId;
 
 use librespot::playback::audio_backend;
-use librespot::playback::config::{
-    AudioFormat, PlayerConfig
-};
-use librespot::playback::player::{
-    Player, PlayerEvent
-};
+use librespot::playback::config::{AudioFormat, PlayerConfig};
+use librespot::playback::player::{Player, PlayerEvent};
 
 const VERSION: &'static str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
@@ -49,7 +45,13 @@ pub fn check(version_info: String) {
 }
 
 // inspired by examples/get_token.rs
-pub async fn get_token(client_id: Option<String>, scopes: Option<String>, save_token: Option<String>, last_credentials: Option<Credentials>, session_config: SessionConfig) {
+pub async fn get_token(
+    client_id: Option<String>,
+    scopes: Option<String>,
+    save_token: Option<String>,
+    last_credentials: Option<Credentials>,
+    session_config: SessionConfig,
+) {
     match last_credentials {
         Some(last_credentials) => {
             if let Some(client_id) = client_id {
@@ -70,13 +72,12 @@ pub async fn get_token(client_id: Option<String>, scopes: Option<String>, save_t
                 });
 
                 if let Some(save_token) = save_token {
-                    fs::write(save_token.to_string(), format!("{}", json_token)).expect("Can't write token file");
-                }
-                else {
+                    fs::write(save_token.to_string(), format!("{}", json_token))
+                        .expect("Can't write token file");
+                } else {
                     println!("{}", json_token);
                 }
-            }
-            else {
+            } else {
                 println!("Use --client-id to provide a CLIENT_ID");
             }
         }
@@ -87,16 +88,24 @@ pub async fn get_token(client_id: Option<String>, scopes: Option<String>, save_t
 }
 
 // inspired by examples/play.rs
-pub async fn play_track(track_id: String, start_position: u32, last_credentials: Option<Credentials>, player_config: PlayerConfig, session_config: SessionConfig) {
+pub async fn play_track(
+    track_id: String,
+    start_position: u32,
+    last_credentials: Option<Credentials>,
+    player_config: PlayerConfig,
+    session_config: SessionConfig,
+) {
     match last_credentials {
         Some(last_credentials) => {
             let backend = audio_backend::find(None).unwrap();
             let audio_format = AudioFormat::default();
 
             let track = SpotifyId::from_uri(
-                track_id.replace("spotty://", "spotify:track:")
-                .replace("://", ":")
-                .as_str());
+                track_id
+                    .replace("spotty://", "spotify:track:")
+                    .replace("://", ":")
+                    .as_str(),
+            );
 
             match track {
                 Ok(track) => {
@@ -129,16 +138,19 @@ pub async fn play_track(track_id: String, start_position: u32, last_credentials:
 pub struct LMS {
     base_url: Option<String>,
     player_mac: Option<String>,
-    auth: Option<String>
+    auth: Option<String>,
 }
 
 #[allow(unused)]
 impl LMS {
     pub fn new(base_url: Option<String>, player_mac: Option<String>, auth: Option<String>) -> LMS {
         LMS {
-            base_url: Some(format!("http://{}/jsonrpc.js", base_url.unwrap_or("localhost:9000".to_string()))),
+            base_url: Some(format!(
+                "http://{}/jsonrpc.js",
+                base_url.unwrap_or("localhost:9000".to_string())
+            )),
             player_mac: player_mac,
-            auth: auth
+            auth: auth,
         }
     }
 
@@ -161,13 +173,24 @@ impl LMS {
                 new_track_id,
             } => {
                 #[cfg(debug_assertions)]
-                info!("event: changed, old track: {}, new track: {}", old_track_id.to_base62(), new_track_id.to_base62());
-                command = format!(r#"["spottyconnect","change","{}","{}"]"#, new_track_id.to_base62().to_string(), old_track_id.to_base62().to_string());
+                info!(
+                    "event: changed, old track: {}, new track: {}",
+                    old_track_id.to_base62(),
+                    new_track_id.to_base62()
+                );
+                command = format!(
+                    r#"["spottyconnect","change","{}","{}"]"#,
+                    new_track_id.to_base62().to_string(),
+                    old_track_id.to_base62().to_string()
+                );
             }
             PlayerEvent::Started { track_id, .. } => {
                 #[cfg(debug_assertions)]
                 info!("event: started, track: {}", track_id.to_base62());
-                command = format!(r#"["spottyconnect","start","{}"]"#, track_id.to_base62().to_string());
+                command = format!(
+                    r#"["spottyconnect","start","{}"]"#,
+                    track_id.to_base62().to_string()
+                );
             }
             PlayerEvent::Stopped { track_id, .. } => {
                 #[cfg(debug_assertions)]
@@ -181,7 +204,12 @@ impl LMS {
                 ..
             } => {
                 #[cfg(debug_assertions)]
-                info!("event: playing, track: {}, duration: {}, position: {}", track_id.to_base62(), duration_ms, position_ms);
+                info!(
+                    "event: playing, track: {}, duration: {}, position: {}",
+                    track_id.to_base62(),
+                    duration_ms,
+                    position_ms
+                );
                 // we're not implementing the seek event here, as it's going to read player state anyway
                 // but signal a change if the new position has changed and is > 0
                 if position_ms <= 0 {
@@ -196,7 +224,12 @@ impl LMS {
                 ..
             } => {
                 #[cfg(debug_assertions)]
-                info!("event: paused, track: {}, duration: {}, position: {}", track_id.to_base62(), duration_ms, position_ms);
+                info!(
+                    "event: paused, track: {}, duration: {}, position: {}",
+                    track_id.to_base62(),
+                    duration_ms,
+                    position_ms
+                );
                 command = r#"["spottyconnect","stop"]"#.to_string();
             }
             PlayerEvent::VolumeSet { volume } => {
@@ -236,7 +269,10 @@ impl LMS {
                 #[cfg(debug_assertions)]
                 info!("Command to send to player: {}", command);
 
-                let json = format!(r#"{{"id": 1,"method":"slim.request","params":["{}",{}]}}"#, player_mac, command);
+                let json = format!(
+                    r#"{{"id": 1,"method":"slim.request","params":["{}",{}]}}"#,
+                    player_mac, command
+                );
 
                 let mut auth_header = "".to_string();
                 if let Some(ref auth) = self.auth {
@@ -250,7 +286,8 @@ impl LMS {
                     .header("content-type", "application/json")
                     .header("authorization", format!("Basic {}", auth_header))
                     .header("x-scanner", "1")
-                    .body(Body::from(json.clone())).unwrap();
+                    .body(Body::from(json.clone()))
+                    .unwrap();
 
                 let client = Client::new();
                 let resp = client.request(req).await;
