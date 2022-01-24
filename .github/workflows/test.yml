@@ -3,7 +3,7 @@ name: test
 
 on:
   push:
-    branches: [master, dev]
+    branches: [master, dev, spotty, spotty-dev]
     paths:
       [
         "**.rs",
@@ -37,6 +37,7 @@ on:
 
 env:
   RUST_BACKTRACE: 1
+  KEYMASTER_CLIENT_ID: ${{ secrets.KEYMASTER_CLIENT_ID }}
 
 jobs:
   fmt:
@@ -76,6 +77,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+
+      - name: Write Build Configuration File
+        uses: DamianReeves/write-file-action@v1.0
+        with:
+          path: ./src/client_id.txt
+          contents: ${{ env.KEYMASTER_CLIENT_ID }}
+          write-mode: overwrite
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
@@ -126,6 +134,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
+      - name: Write Build Configuration File
+        uses: DamianReeves/write-file-action@v1.0
+        with:
+          path: ./src/client_id.txt
+          contents: ${{ env.KEYMASTER_CLIENT_ID }}
+          write-mode: overwrite
+
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -170,6 +185,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+
+      - name: Write Build Configuration File
+        uses: DamianReeves/write-file-action@v1.0
+        with:
+          path: ./src/client_id.txt
+          contents: ${{ env.KEYMASTER_CLIENT_ID }}
+          write-mode: overwrite
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
