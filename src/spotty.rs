@@ -175,26 +175,32 @@ impl LMS {
                 #[cfg(debug_assertions)]
                 info!(
                     "event: changed, old track: {}, new track: {}",
-                    old_track_id.to_base62(),
-                    new_track_id.to_base62()
+                    old_track_id.to_base62().unwrap_or_default(),
+                    new_track_id.to_base62().unwrap_or_default()
                 );
                 command = format!(
                     r#"["spottyconnect","change","{}","{}"]"#,
-                    new_track_id.to_base62().to_string(),
-                    old_track_id.to_base62().to_string()
+                    new_track_id.to_base62().unwrap_or_default().to_string(),
+                    old_track_id.to_base62().unwrap_or_default().to_string()
                 );
             }
             PlayerEvent::Started { track_id, .. } => {
                 #[cfg(debug_assertions)]
-                info!("event: started, track: {}", track_id.to_base62());
+                info!(
+                    "event: started, track: {}",
+                    track_id.to_base62().unwrap_or_default()
+                );
                 command = format!(
                     r#"["spottyconnect","start","{}"]"#,
-                    track_id.to_base62().to_string()
+                    track_id.to_base62().unwrap_or_default().to_string()
                 );
             }
             PlayerEvent::Stopped { track_id, .. } => {
                 #[cfg(debug_assertions)]
-                info!("event: stopped, track: {}", track_id.to_base62());
+                info!(
+                    "event: stopped, track: {}",
+                    track_id.to_base62().unwrap_or_default()
+                );
                 command = r#"["spottyconnect","stop"]"#.to_string();
             }
             PlayerEvent::Playing {
@@ -206,7 +212,7 @@ impl LMS {
                 #[cfg(debug_assertions)]
                 info!(
                     "event: playing, track: {}, duration: {}, position: {}",
-                    track_id.to_base62(),
+                    track_id.to_base62().unwrap_or_default(),
                     duration_ms,
                     position_ms
                 );
@@ -226,7 +232,7 @@ impl LMS {
                 #[cfg(debug_assertions)]
                 info!(
                     "event: paused, track: {}, duration: {}, position: {}",
-                    track_id.to_base62(),
+                    track_id.to_base62().unwrap_or_default(),
                     duration_ms,
                     position_ms
                 );
