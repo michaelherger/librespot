@@ -1,6 +1,6 @@
 use hyper::{Body, Client, Method, Request};
 #[allow(unused)]
-use log::{info, warn};
+use log::{error, info, warn};
 
 use serde_json::json;
 use std::fs;
@@ -57,25 +57,32 @@ pub async fn get_token(
             if let Some(client_id) = client_id {
                 let scopes = scopes.unwrap_or(SCOPES.to_string());
 
-                let session = Session::connect(session_config, last_credentials, None)
-                    .await
-                    .unwrap();
+                match Session::connect(session_config, last_credentials, None).await {
+                    Ok(session) => {
+                        match keymaster::get_token(&session, &client_id, &scopes).await {
+                            Ok(token) => {
+                                let json_token = json!({
+                                    "accessToken": token.access_token.to_string(),
+                                    "expiresIn": token.expires_in,
+                                });
 
-                let token = keymaster::get_token(&session, &client_id, &scopes)
-                    .await
-                    .unwrap();
-
-                let json_token = json!({
-                    // keep backwards compatibility with older versions
-                    "accessToken": token.access_token.to_string(),
-                    "expiresIn": token.expires_in,
-                });
-
-                if let Some(save_token) = save_token {
-                    fs::write(save_token.to_string(), format!("{}", json_token))
-                        .expect("Can't write token file");
-                } else {
-                    println!("{}", json_token);
+                                if let Some(save_token) = save_token {
+                                    fs::write(save_token.to_string(), format!("{}", json_token))
+                                        .expect("Can't write token file");
+                                } else {
+                                    println!("{}", json_token);
+                                }
+                            }
+                            Err(error) => {
+                                error!("Failed to fetch token: {:?}", error);
+                                println!("{{ \"error\": \"Failed to get token.\" }}");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        error!("Failed to create session: {:?}", error);
+                        println!("{{ \"error\": \"Failed to create session.\" }}");
+                    }
                 }
             } else {
                 println!("Use --client-id to provide a CLIENT_ID");
@@ -108,20 +115,23 @@ pub async fn play_track(
             );
 
             match track {
-                Ok(track) => {
-                    let session = Session::connect(session_config, last_credentials, None)
-                        .await
-                        .unwrap();
+                Ok(track) => match Session::connect(session_config, last_credentials, None).await {
+                    Ok(session) => {
+                        let (mut player, _) =
+                            Player::new(player_config, session, None, move || {
+                                backend(None, audio_format)
+                            });
 
-                    let (mut player, _) = Player::new(player_config, session, None, move || {
-                        backend(None, audio_format)
-                    });
-
-                    player.load(track, true, start_position);
-                    player.await_end_of_track().await;
-                }
+                        player.load(track, true, start_position);
+                        player.await_end_of_track().await;
+                    }
+                    Err(error) => {
+                        error!("Failed to create session: {:?}", error);
+                        return;
+                    }
+                },
                 Err(error) => {
-                    warn!("Problem getting a Spotify ID for {}: {:?}", track_id, error);
+                    error!("Problem getting a Spotify ID for {}: {:?}", track_id, error);
                     return;
                 }
             };
