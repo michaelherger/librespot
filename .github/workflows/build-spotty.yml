@@ -11,7 +11,7 @@ env:
 
 jobs:
   macOS:
-    runs-on: macos-10.15
+    runs-on: macos-11.0
 
     steps:
     - name: Install Rust
@@ -29,14 +29,32 @@ jobs:
         contents: ${{ env.KEYMASTER_CLIENT_ID }}
         write-mode: overwrite
 
+    - name: Install Rust support for ARM64 & prepare environment
+      run: |
+        rustup target add aarch64-apple-darwin
+        mkdir releases
+
     - name: Build
-      run: cargo build --release && strip target/release/spotty
+      run: |
+        cargo build --release
+        strip target/release/spotty
+        cp target/release/spotty releases/spotty-x86_64
+        cargo build --target=aarch64-apple-darwin --release
+        strip target/aarch64-apple-darwin/release/spotty
+        cp target/aarch64-apple-darwin/release/spotty releases/spotty-arm64
+
+    - name: Build fat binary
+      run: |
+        lipo -create \
+          -arch x86_64 releases/spotty-x86_64 \
+          -arch arm64 releases/spotty-arm64 \
+          -output releases/spotty
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v2
       with:
         name: spotty-mac
-        path: target/release/spotty
+        path: releases/
 
   Linux:
     runs-on: ubuntu-latest
@@ -56,7 +74,9 @@ jobs:
       run: docker run --rm -v $(pwd):/source dlecan/rust-crosscompiler-arm:stable
 
     - name: Build other binaries (x86_64, i686, ARMv8)
-      run: ./xbuild.sh
+      run: |
+        docker build -t spotty-cross - < docker/Dockerfile
+        docker run --rm -v $PWD/target:/build -v $PWD:/src spotty-cross
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v2
