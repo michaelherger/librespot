@@ -1,8 +1,9 @@
-use rand::rngs::ThreadRng;
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
 use rand_distr::{Distribution, Normal, Triangular, Uniform};
 use std::fmt;
 
-const NUM_CHANNELS: usize = 2;
+use crate::NUM_CHANNELS;
 
 // Dithering lowers digital-to-analog conversion ("requantization") error,
 // linearizing output, lowering distortion and replacing it with a constant,
@@ -41,20 +42,19 @@ impl fmt::Display for dyn Ditherer {
     }
 }
 
-// Implementation note: we save the handle to ThreadRng so it doesn't require
-// a lookup on each call (which is on each sample!). This is ~2.5x as fast.
-// Downside is that it is not Send so we cannot move it around player threads.
-//
+fn create_rng() -> SmallRng {
+    SmallRng::from_entropy()
+}
 
 pub struct TriangularDitherer {
-    cached_rng: ThreadRng,
+    cached_rng: SmallRng,
     distribution: Triangular<f64>,
 }
 
 impl Ditherer for TriangularDitherer {
     fn new() -> Self {
         Self {
-            cached_rng: rand::thread_rng(),
+            cached_rng: create_rng(),
             // 2 LSB peak-to-peak needed to linearize the response:
             distribution: Triangular::new(-1.0, 1.0, 0.0).unwrap(),
         }
@@ -74,14 +74,14 @@ impl TriangularDitherer {
 }
 
 pub struct GaussianDitherer {
-    cached_rng: ThreadRng,
+    cached_rng: SmallRng,
     distribution: Normal<f64>,
 }
 
 impl Ditherer for GaussianDitherer {
     fn new() -> Self {
         Self {
-            cached_rng: rand::thread_rng(),
+            cached_rng: create_rng(),
             // 1/2 LSB RMS needed to linearize the response:
             distribution: Normal::new(0.0, 0.5).unwrap(),
         }
@@ -102,8 +102,8 @@ impl GaussianDitherer {
 
 pub struct HighPassDitherer {
     active_channel: usize,
-    previous_noises: [f64; NUM_CHANNELS],
-    cached_rng: ThreadRng,
+    previous_noises: [f64; NUM_CHANNELS as usize],
+    cached_rng: SmallRng,
     distribution: Uniform<f64>,
 }
 
@@ -111,8 +111,8 @@ impl Ditherer for HighPassDitherer {
     fn new() -> Self {
         Self {
             active_channel: 0,
-            previous_noises: [0.0; NUM_CHANNELS],
-            cached_rng: rand::thread_rng(),
+            previous_noises: [0.0; NUM_CHANNELS as usize],
+            cached_rng: create_rng(),
             distribution: Uniform::new_inclusive(-0.5, 0.5), // 1 LSB +/- 1 LSB (previous) = 2 LSB
         }
     }

@@ -1,36 +1,45 @@
-use super::{Open, Sink, SinkAsBytes};
+use super::{Open, Sink, SinkAsBytes, SinkError, SinkResult};
 use crate::config::AudioFormat;
 use crate::convert::Converter;
 use crate::decoder::AudioPacket;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
+use std::process::exit;
 
 pub struct StdoutSink {
     output: Option<Box<dyn Write>>,
-    path: Option<String>,
+    file: Option<String>,
     format: AudioFormat,
 }
 
 impl Open for StdoutSink {
-    fn open(path: Option<String>, format: AudioFormat) -> Self {
+    fn open(file: Option<String>, format: AudioFormat) -> Self {
+        if let Some("?") = file.as_deref() {
+            info!("Usage:");
+            println!("  Output to stdout: --backend pipe");
+            println!("  Output to file:   --backend pipe --device {{filename}}");
+            exit(0);
+        }
+
         info!("Using pipe sink with format: {:?}", format);
         Self {
             output: None,
-            path,
+            file,
             format,
         }
     }
 }
 
 impl Sink for StdoutSink {
-    fn start(&mut self) -> io::Result<()> {
+    fn start(&mut self) -> SinkResult<()> {
         if self.output.is_none() {
-            let output: Box<dyn Write> = match self.path.as_deref() {
-                Some(path) => {
+            let output: Box<dyn Write> = match self.file.as_deref() {
+                Some(file) => {
                     let open_op = OpenOptions::new()
                         .write(true)
-                        .open(path)
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                        .create(true)
+                        .open(file)
+                        .map_err(|e| SinkError::ConnectionRefused(e.to_string()))?;
                     Box::new(open_op)
                 }
                 None => Box::new(io::stdout()),
@@ -46,14 +55,18 @@ impl Sink for StdoutSink {
 }
 
 impl SinkAsBytes for StdoutSink {
-    fn write_bytes(&mut self, data: &[u8]) -> io::Result<()> {
+    fn write_bytes(&mut self, data: &[u8]) -> SinkResult<()> {
         match self.output.as_deref_mut() {
             Some(output) => {
-                output.write_all(data)?;
-                output.flush()?;
+                output
+                    .write_all(data)
+                    .map_err(|e| SinkError::OnWrite(e.to_string()))?;
+                output
+                    .flush()
+                    .map_err(|e| SinkError::OnWrite(e.to_string()))?;
             }
             None => {
-                return Err(io::Error::new(io::ErrorKind::Other, "Output is None"));
+                return Err(SinkError::NotConnected("Output is None".to_string()));
             }
         }
 

@@ -238,29 +238,38 @@ pub struct RemoveFileError(());
 
 impl Cache {
     pub fn new<P: AsRef<Path>>(
-        system_location: Option<P>,
-        audio_location: Option<P>,
+        credentials_path: Option<P>,
+        volume_path: Option<P>,
+        audio_path: Option<P>,
         size_limit: Option<u64>,
     ) -> io::Result<Self> {
-        if let Some(location) = &system_location {
+        let mut size_limiter = None;
+
+        if let Some(location) = &credentials_path {
             fs::create_dir_all(location)?;
         }
 
-        let mut size_limiter = None;
+        let credentials_location = credentials_path
+            .as_ref()
+            .map(|p| p.as_ref().join("credentials.json"));
 
-        if let Some(location) = &audio_location {
+        if let Some(location) = &volume_path {
             fs::create_dir_all(location)?;
+        }
+
+        let volume_location = volume_path.as_ref().map(|p| p.as_ref().join("volume"));
+
+        if let Some(location) = &audio_path {
+            fs::create_dir_all(location)?;
+
             if let Some(limit) = size_limit {
                 let limiter = FsSizeLimiter::new(location.as_ref(), limit);
+
                 size_limiter = Some(Arc::new(limiter));
             }
         }
 
-        let audio_location = audio_location.map(|p| p.as_ref().to_owned());
-        let volume_location = system_location.as_ref().map(|p| p.as_ref().join("volume"));
-        let credentials_location = system_location
-            .as_ref()
-            .map(|p| p.as_ref().join("credentials.json"));
+        let audio_location = audio_path.map(|p| p.as_ref().to_owned());
 
         let cache = Cache {
             credentials_location,
@@ -342,12 +351,17 @@ impl Cache {
     }
 
     fn file_path(&self, file: FileId) -> Option<PathBuf> {
-        self.audio_location.as_ref().map(|location| {
-            let name = file.to_base16();
-            let mut path = location.join(&name[0..2]);
-            path.push(&name[2..]);
-            path
-        })
+        match file.to_base16() {
+            Ok(name) => self.audio_location.as_ref().map(|location| {
+                let mut path = location.join(&name[0..2]);
+                path.push(&name[2..]);
+                path
+            }),
+            Err(e) => {
+                warn!("Invalid FileId: {}", e.utf8_error());
+                None
+            }
+        }
     }
 
     pub fn file(&self, file: FileId) -> Option<File> {

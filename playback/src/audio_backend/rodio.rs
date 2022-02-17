@@ -1,11 +1,11 @@
 use std::process::exit;
+use std::thread;
 use std::time::Duration;
-use std::{io, thread};
 
 use cpal::traits::{DeviceTrait, HostTrait};
 use thiserror::Error;
 
-use super::Sink;
+use super::{Sink, SinkError, SinkResult};
 use crate::config::AudioFormat;
 use crate::convert::Converter;
 use crate::decoder::AudioPacket;
@@ -33,16 +33,30 @@ pub fn mk_rodiojack(device: Option<String>, format: AudioFormat) -> Box<dyn Sink
 
 #[derive(Debug, Error)]
 pub enum RodioError {
-    #[error("Rodio: no device available")]
+    #[error("<RodioSink> No Device Available")]
     NoDeviceAvailable,
-    #[error("Rodio: device \"{0}\" is not available")]
+    #[error("<RodioSink> device \"{0}\" is Not Available")]
     DeviceNotAvailable(String),
-    #[error("Rodio play error: {0}")]
+    #[error("<RodioSink> Play Error: {0}")]
     PlayError(#[from] rodio::PlayError),
-    #[error("Rodio stream error: {0}")]
+    #[error("<RodioSink> Stream Error: {0}")]
     StreamError(#[from] rodio::StreamError),
-    #[error("Cannot get audio devices: {0}")]
+    #[error("<RodioSink> Cannot Get Audio Devices: {0}")]
     DevicesError(#[from] cpal::DevicesError),
+    #[error("<RodioSink> {0}")]
+    Samples(String),
+}
+
+impl From<RodioError> for SinkError {
+    fn from(e: RodioError) -> SinkError {
+        use RodioError::*;
+        let es = e.to_string();
+        match e {
+            StreamError(_) | PlayError(_) | Samples(_) => SinkError::OnWrite(es),
+            NoDeviceAvailable | DeviceNotAvailable(_) => SinkError::ConnectionRefused(es),
+            DevicesError(_) => SinkError::InvalidParams(es),
+        }
+    }
 }
 
 pub struct RodioSink {
@@ -121,21 +135,18 @@ fn create_sink(
     host: &cpal::Host,
     device: Option<String>,
 ) -> Result<(rodio::Sink, rodio::OutputStream), RodioError> {
-    let rodio_device = match device {
-        Some(ask) if &ask == "?" => {
-            let exit_code = match list_outputs(host) {
-                Ok(()) => 0,
-                Err(e) => {
-                    error!("{}", e);
-                    1
-                }
-            };
-            exit(exit_code)
-        }
+    let rodio_device = match device.as_deref() {
+        Some("?") => match list_outputs(host) {
+            Ok(()) => exit(0),
+            Err(e) => {
+                error!("{}", e);
+                exit(1);
+            }
+        },
         Some(device_name) => {
             host.output_devices()?
                 .find(|d| d.name().ok().map_or(false, |name| name == device_name)) // Ignore devices for which getting name fails
-                .ok_or(RodioError::DeviceNotAvailable(device_name))?
+                .ok_or_else(|| RodioError::DeviceNotAvailable(device_name.to_string()))?
         }
         None => host
             .default_output_device()
@@ -175,8 +186,10 @@ pub fn open(host: cpal::Host, device: Option<String>, format: AudioFormat) -> Ro
 }
 
 impl Sink for RodioSink {
-    fn write(&mut self, packet: &AudioPacket, converter: &mut Converter) -> io::Result<()> {
-        let samples = packet.samples();
+    fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
+        let samples = packet
+            .samples()
+            .map_err(|e| RodioError::Samples(e.to_string()))?;
         match self.format {
             AudioFormat::F32 => {
                 let samples_f32: &[f32] = &converter.f64_to_f32(samples);
@@ -211,5 +224,6 @@ impl Sink for RodioSink {
 }
 
 impl RodioSink {
+    #[allow(dead_code)]
     pub const NAME: &'static str = "rodio";
 }

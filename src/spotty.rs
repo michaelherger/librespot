@@ -1,6 +1,6 @@
 use hyper::{Body, Client, Method, Request};
 #[allow(unused)]
-use log::{info, warn};
+use log::{error, info, warn};
 
 use serde_json::json;
 use std::fs;
@@ -11,7 +11,6 @@ use librespot::core::config::SessionConfig;
 use librespot::core::keymaster;
 use librespot::core::session::Session;
 use librespot::core::spotify_id::SpotifyId;
-use librespot::core::version;
 
 use librespot::playback::audio_backend;
 use librespot::playback::config::{AudioFormat, PlayerConfig};
@@ -26,15 +25,8 @@ const DEBUGMODE: bool = true;
 #[cfg(not(debug_assertions))]
 const DEBUGMODE: bool = false;
 
-pub fn check() {
-    println!(
-        "ok {spottyvers} - using librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id})",
-        spottyvers = VERSION,
-        semver = version::SEMVER,
-        sha = version::SHA_SHORT,
-        build_date = version::BUILD_DATE,
-        build_id = version::BUILD_ID,
-    );
+pub fn check(version_info: String) {
+    println!("ok {}", version_info.to_string());
 
     let capabilities = json!({
         "version": env!("CARGO_PKG_VERSION").to_string(),
@@ -65,25 +57,32 @@ pub async fn get_token(
             if let Some(client_id) = client_id {
                 let scopes = scopes.unwrap_or(SCOPES.to_string());
 
-                let session = Session::connect(session_config, last_credentials, None)
-                    .await
-                    .unwrap();
+                match Session::connect(session_config, last_credentials, None).await {
+                    Ok(session) => {
+                        match keymaster::get_token(&session, &client_id, &scopes).await {
+                            Ok(token) => {
+                                let json_token = json!({
+                                    "accessToken": token.access_token.to_string(),
+                                    "expiresIn": token.expires_in,
+                                });
 
-                let token = keymaster::get_token(&session, &client_id, &scopes)
-                    .await
-                    .unwrap();
-
-                let json_token = json!({
-                    // keep backwards compatibility with older versions
-                    "accessToken": token.access_token.to_string(),
-                    "expiresIn": token.expires_in,
-                });
-
-                if let Some(save_token) = save_token {
-                    fs::write(save_token.to_string(), format!("{}", json_token))
-                        .expect("Can't write token file");
-                } else {
-                    println!("{}", json_token);
+                                if let Some(save_token) = save_token {
+                                    fs::write(save_token.to_string(), format!("{}", json_token))
+                                        .expect("Can't write token file");
+                                } else {
+                                    println!("{}", json_token);
+                                }
+                            }
+                            Err(error) => {
+                                error!("Failed to fetch token: {:?}", error);
+                                println!("{{ \"error\": \"Failed to get token.\" }}");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        error!("Failed to create session: {:?}", error);
+                        println!("{{ \"error\": \"Failed to create session.\" }}");
+                    }
                 }
             } else {
                 println!("Use --client-id to provide a CLIENT_ID");
@@ -116,20 +115,23 @@ pub async fn play_track(
             );
 
             match track {
-                Ok(track) => {
-                    let session = Session::connect(session_config, last_credentials, None)
-                        .await
-                        .unwrap();
+                Ok(track) => match Session::connect(session_config, last_credentials, None).await {
+                    Ok(session) => {
+                        let (mut player, _) =
+                            Player::new(player_config, session, None, move || {
+                                backend(None, audio_format)
+                            });
 
-                    let (mut player, _) = Player::new(player_config, session, None, move || {
-                        backend(None, audio_format)
-                    });
-
-                    player.load(track, true, start_position);
-                    player.await_end_of_track().await;
-                }
+                        player.load(track, true, start_position);
+                        player.await_end_of_track().await;
+                    }
+                    Err(error) => {
+                        error!("Failed to create session: {:?}", error);
+                        return;
+                    }
+                },
                 Err(error) => {
-                    warn!("Problem getting a Spotify ID for {}: {:?}", track_id, error);
+                    error!("Problem getting a Spotify ID for {}: {:?}", track_id, error);
                     return;
                 }
             };
@@ -183,26 +185,32 @@ impl LMS {
                 #[cfg(debug_assertions)]
                 info!(
                     "event: changed, old track: {}, new track: {}",
-                    old_track_id.to_base62(),
-                    new_track_id.to_base62()
+                    old_track_id.to_base62().unwrap_or_default(),
+                    new_track_id.to_base62().unwrap_or_default()
                 );
                 command = format!(
                     r#"["spottyconnect","change","{}","{}"]"#,
-                    new_track_id.to_base62().to_string(),
-                    old_track_id.to_base62().to_string()
+                    new_track_id.to_base62().unwrap_or_default().to_string(),
+                    old_track_id.to_base62().unwrap_or_default().to_string()
                 );
             }
             PlayerEvent::Started { track_id, .. } => {
                 #[cfg(debug_assertions)]
-                info!("event: started, track: {}", track_id.to_base62());
+                info!(
+                    "event: started, track: {}",
+                    track_id.to_base62().unwrap_or_default()
+                );
                 command = format!(
                     r#"["spottyconnect","start","{}"]"#,
-                    track_id.to_base62().to_string()
+                    track_id.to_base62().unwrap_or_default().to_string()
                 );
             }
             PlayerEvent::Stopped { track_id, .. } => {
                 #[cfg(debug_assertions)]
-                info!("event: stopped, track: {}", track_id.to_base62());
+                info!(
+                    "event: stopped, track: {}",
+                    track_id.to_base62().unwrap_or_default()
+                );
                 command = r#"["spottyconnect","stop"]"#.to_string();
             }
             PlayerEvent::Playing {
@@ -214,7 +222,7 @@ impl LMS {
                 #[cfg(debug_assertions)]
                 info!(
                     "event: playing, track: {}, duration: {}, position: {}",
-                    track_id.to_base62(),
+                    track_id.to_base62().unwrap_or_default(),
                     duration_ms,
                     position_ms
                 );
@@ -234,7 +242,7 @@ impl LMS {
                 #[cfg(debug_assertions)]
                 info!(
                     "event: paused, track: {}, duration: {}, position: {}",
-                    track_id.to_base62(),
+                    track_id.to_base62().unwrap_or_default(),
                     duration_ms,
                     position_ms
                 );

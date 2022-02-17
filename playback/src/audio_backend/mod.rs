@@ -1,26 +1,40 @@
 use crate::config::AudioFormat;
 use crate::convert::Converter;
 use crate::decoder::AudioPacket;
-use std::io;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum SinkError {
+    #[error("Audio Sink Error Not Connected: {0}")]
+    NotConnected(String),
+    #[error("Audio Sink Error Connection Refused: {0}")]
+    ConnectionRefused(String),
+    #[error("Audio Sink Error On Write: {0}")]
+    OnWrite(String),
+    #[error("Audio Sink Error Invalid Parameters: {0}")]
+    InvalidParams(String),
+}
+
+pub type SinkResult<T> = Result<T, SinkError>;
 
 pub trait Open {
     fn open(_: Option<String>, format: AudioFormat) -> Self;
 }
 
 pub trait Sink {
-    fn start(&mut self) -> io::Result<()> {
+    fn start(&mut self) -> SinkResult<()> {
         Ok(())
     }
-    fn stop(&mut self) -> io::Result<()> {
+    fn stop(&mut self) -> SinkResult<()> {
         Ok(())
     }
-    fn write(&mut self, packet: &AudioPacket, converter: &mut Converter) -> io::Result<()>;
+    fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()>;
 }
 
 pub type SinkBuilder = fn(Option<String>, AudioFormat) -> Box<dyn Sink>;
 
 pub trait SinkAsBytes {
-    fn write_bytes(&mut self, data: &[u8]) -> io::Result<()>;
+    fn write_bytes(&mut self, data: &[u8]) -> SinkResult<()>;
 }
 
 fn mk_sink<S: Sink + Open + 'static>(device: Option<String>, format: AudioFormat) -> Box<dyn Sink> {
@@ -30,34 +44,34 @@ fn mk_sink<S: Sink + Open + 'static>(device: Option<String>, format: AudioFormat
 // reuse code for various backends
 macro_rules! sink_as_bytes {
     () => {
-        fn write(&mut self, packet: &AudioPacket, converter: &mut Converter) -> io::Result<()> {
+        fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
             use crate::convert::i24;
             use zerocopy::AsBytes;
             match packet {
                 AudioPacket::Samples(samples) => match self.format {
                     AudioFormat::F64 => self.write_bytes(samples.as_bytes()),
                     AudioFormat::F32 => {
-                        let samples_f32: &[f32] = &converter.f64_to_f32(samples);
+                        let samples_f32: &[f32] = &converter.f64_to_f32(&samples);
                         self.write_bytes(samples_f32.as_bytes())
                     }
                     AudioFormat::S32 => {
-                        let samples_s32: &[i32] = &converter.f64_to_s32(samples);
+                        let samples_s32: &[i32] = &converter.f64_to_s32(&samples);
                         self.write_bytes(samples_s32.as_bytes())
                     }
                     AudioFormat::S24 => {
-                        let samples_s24: &[i32] = &converter.f64_to_s24(samples);
+                        let samples_s24: &[i32] = &converter.f64_to_s24(&samples);
                         self.write_bytes(samples_s24.as_bytes())
                     }
                     AudioFormat::S24_3 => {
-                        let samples_s24_3: &[i24] = &converter.f64_to_s24_3(samples);
+                        let samples_s24_3: &[i24] = &converter.f64_to_s24_3(&samples);
                         self.write_bytes(samples_s24_3.as_bytes())
                     }
                     AudioFormat::S16 => {
-                        let samples_s16: &[i16] = &converter.f64_to_s16(samples);
+                        let samples_s16: &[i16] = &converter.f64_to_s16(&samples);
                         self.write_bytes(samples_s16.as_bytes())
                     }
                 },
-                AudioPacket::OggData(samples) => self.write_bytes(samples),
+                AudioPacket::OggData(samples) => self.write_bytes(&samples),
             }
         }
     };
@@ -90,7 +104,7 @@ use self::gstreamer::GstreamerSink;
 
 #[cfg(any(feature = "rodio-backend", feature = "rodiojack-backend"))]
 mod rodio;
-#[cfg(any(feature = "rodio-backend", feature = "rodiojack-backend"))]
+#[cfg(feature = "rodio-backend")]
 use self::rodio::RodioSink;
 
 #[cfg(feature = "sdl-backend")]
@@ -132,11 +146,6 @@ pub fn find(name: Option<String>) -> Option<SinkBuilder> {
             .find(|backend| name == backend.0)
             .map(|backend| backend.1)
     } else {
-        Some(
-            BACKENDS
-                .first()
-                .expect("No backends were enabled at build time")
-                .1,
-        )
+        BACKENDS.first().map(|backend| backend.1)
     }
 }
