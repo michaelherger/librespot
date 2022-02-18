@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::process::exit;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use std::{mem, thread};
+use std::{mem, thread, time};
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use futures_util::stream::futures_unordered::FuturesUnordered;
@@ -1430,6 +1430,12 @@ impl PlayerInternal {
             None => {
                 if self.config.lms_connect_mode {
                     // info!("In LMS Connect mode - ignore end of track");
+
+                    // this is one ugly hack to prevent a tight loop... sleep a few milliseconds.
+                    // TODO - review with each relevant change to librespot, get rid of this ASAP
+                    let sleep_duration = time::Duration::from_millis(10);
+                    thread::sleep(sleep_duration);
+
                     return;
                 }
 
