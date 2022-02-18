@@ -2,7 +2,7 @@ use hyper::{Body, Client, Method, Request};
 #[allow(unused)]
 use log::{error, info, warn};
 
-use serde_json::json;
+use serde_json::{json, Value};
 use std::fs;
 use std::process::exit;
 
@@ -61,27 +61,33 @@ pub async fn get_token(
                     Ok(session) => {
                         match keymaster::get_token(&session, &client_id, &scopes).await {
                             Ok(token) => {
-                                let json_token = json!({
-                                    "accessToken": token.access_token.to_string(),
-                                    "expiresIn": token.expires_in,
-                                });
-
-                                if let Some(save_token) = save_token {
-                                    fs::write(save_token.to_string(), format!("{}", json_token))
-                                        .expect("Can't write token file");
-                                } else {
-                                    println!("{}", json_token);
-                                }
+                                write_response(
+                                    json!({
+                                        "accessToken": token.access_token.to_string(),
+                                        "expiresIn": token.expires_in,
+                                    }),
+                                    save_token,
+                                );
                             }
                             Err(error) => {
                                 error!("Failed to fetch token: {:?}", error);
-                                println!("{{ \"error\": \"Failed to get token.\" }}");
+                                write_response(
+                                    json!({
+                                        "error": "Failed to get access token."
+                                    }),
+                                    save_token,
+                                );
                             }
                         }
                     }
                     Err(error) => {
                         error!("Failed to create session: {:?}", error);
-                        println!("{{ \"error\": \"Failed to create session.\" }}");
+                        write_response(
+                            json!({
+                                "error": "Failed to create session or connect to servers."
+                            }),
+                            save_token,
+                        );
                     }
                 }
             } else {
@@ -91,6 +97,14 @@ pub async fn get_token(
         None => {
             println!("Missing credentials");
         }
+    }
+}
+
+fn write_response(json_token: Value, save_token: Option<String>) {
+    if let Some(save_token) = save_token {
+        fs::write(save_token.to_string(), json_token.to_string()).expect("Can't write token file");
+    } else {
+        println!("{}", json_token);
     }
 }
 
