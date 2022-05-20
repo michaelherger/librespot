@@ -14,6 +14,7 @@ use librespot::core::spotify_id::SpotifyId;
 
 use librespot::playback::audio_backend;
 use librespot::playback::config::{AudioFormat, PlayerConfig};
+use librespot::playback::mixer::NoOpVolume;
 use librespot::playback::player::{Player, PlayerEvent};
 
 const VERSION: &'static str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
@@ -57,8 +58,8 @@ pub async fn get_token(
             if let Some(client_id) = client_id {
                 let scopes = scopes.unwrap_or(SCOPES.to_string());
 
-                match Session::connect(session_config, last_credentials, None).await {
-                    Ok(session) => {
+                match Session::connect(session_config, last_credentials, None, true).await {
+                    Ok((session, _)) => {
                         match keymaster::get_token(&session, &client_id, &scopes).await {
                             Ok(token) => {
                                 write_response(
@@ -129,10 +130,12 @@ pub async fn play_track(
             );
 
             match track {
-                Ok(track) => match Session::connect(session_config, last_credentials, None).await {
-                    Ok(session) => {
+                Ok(track) => match Session::connect(session_config, last_credentials, None, true)
+                    .await
+                {
+                    Ok((session, _)) => {
                         let (mut player, _) =
-                            Player::new(player_config, session, None, move || {
+                            Player::new(player_config, session, Box::new(NoOpVolume), move || {
                                 backend(None, audio_format)
                             });
 
