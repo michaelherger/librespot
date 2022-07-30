@@ -5,16 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) since v0.2.0.
 
-## [Unreleased]
+## [0.4.2] - 2022-07-29
 
 ### Changed
+- [playback] `pipe`: Better error handling
+- [playback] `subprocess`: Better error handling
 
 ### Added
+- [core] `apresolve`: Blacklist ap-gew4 and ap-gue1 access points that cause channel errors
+- [playback] `pipe`: Implement stop
 
 ### Fixed
+- [main] fix `--opt=value` line argument logging
 - [playback] `alsamixer`: make `--volume-ctrl fixed` work as expected when combined with `--mixer alsa`
 
-### Removed
+## Removed
 
 ## [0.4.1] - 2022-05-23
 
@@ -112,7 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - [connect] Fix step size on volume up/down events
 - [connect] Fix looping back to the first track after the last track of an album or playlist
-- [playback] Incorrect `PlayerConfig::default().normalisation_threshold` caused distortion when using dynamic volume normalisation downstream 
+- [playback] Incorrect `PlayerConfig::default().normalisation_threshold` caused distortion when using dynamic volume normalisation downstream
 - [playback] Fix `log` and `cubic` volume controls to be mute at zero volume
 - [playback] Fix `S24_3` format on big-endian systems
 - [playback] `alsamixer`: make `cubic` consistent between cards that report minimum volume as mute, and cards that report some dB value
@@ -136,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2019-11-06
 
-[unreleased]: https://github.com/librespot-org/librespot/compare/v0.4.1..HEAD
+[0.4.2]: https://github.com/librespot-org/librespot/compare/v0.4.1..v0.4.2
 [0.4.1]: https://github.com/librespot-org/librespot/compare/v0.4.0..v0.4.1
 [0.4.0]: https://github.com/librespot-org/librespot/compare/v0.3.1..v0.4.0
 [0.3.1]: https://github.com/librespot-org/librespot/compare/v0.3.0..v0.3.1
