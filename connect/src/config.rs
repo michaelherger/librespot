@@ -11,7 +11,7 @@ pub struct ConnectConfig {
 impl Default for ConnectConfig {
     fn default() -> ConnectConfig {
         ConnectConfig {
-            name: "Librespot".to_string(),
+            name: "Spotty".to_string(),
             device_type: DeviceType::default(),
             initial_volume: Some(50),
             has_volume_ctrl: true,
