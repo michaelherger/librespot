@@ -8,7 +8,6 @@ use std::process::exit;
 
 use librespot::core::authentication::Credentials;
 use librespot::core::config::SessionConfig;
-use librespot::core::keymaster;
 use librespot::core::session::Session;
 use librespot::core::spotify_id::SpotifyId;
 
@@ -57,30 +56,30 @@ pub async fn get_token(
         Some(last_credentials) => {
             if let Some(client_id) = client_id {
                 let scopes = scopes.unwrap_or(SCOPES.to_string());
+                let session = Session::new(session_config, None);
+                session.set_client_id(client_id.as_str());
 
-                match Session::connect(session_config, last_credentials, None, true).await {
-                    Ok((session, _)) => {
-                        match keymaster::get_token(&session, &client_id, &scopes).await {
-                            Ok(token) => {
-                                write_response(
-                                    json!({
-                                        "accessToken": token.access_token.to_string(),
-                                        "expiresIn": token.expires_in,
-                                    }),
-                                    save_token,
-                                );
-                            }
-                            Err(error) => {
-                                error!("Failed to fetch token: {:?}", error);
-                                write_response(
-                                    json!({
-                                        "error": "Failed to get access token."
-                                    }),
-                                    save_token,
-                                );
-                            }
+                match session.connect(last_credentials, true).await {
+                    Ok(()) => match session.token_provider().get_token(&scopes).await {
+                        Ok(token) => {
+                            write_response(
+                                json!({
+                                    "accessToken": token.access_token.to_string(),
+                                    "expiresIn": token.expires_in,
+                                }),
+                                save_token,
+                            );
                         }
-                    }
+                        Err(error) => {
+                            error!("Failed to fetch token: {:?}", error);
+                            write_response(
+                                json!({
+                                    "error": "Failed to get access token."
+                                }),
+                                save_token,
+                            );
+                        }
+                    },
                     Err(error) => {
                         error!("Failed to create session: {:?}", error);
                         write_response(
@@ -129,26 +128,24 @@ pub async fn play_track(
                     .as_str(),
             );
 
-            match track {
-                Ok(track) => match Session::connect(session_config, last_credentials, None, true)
-                    .await
-                {
-                    Ok((session, _)) => {
-                        let (mut player, _) =
-                            Player::new(player_config, session, Box::new(NoOpVolume), move || {
-                                backend(None, audio_format)
-                            });
+            let session = Session::new(session_config, None);
+            if let Err(error) = session.connect(last_credentials, false).await {
+                error!("Failed to create session: {:?}", error);
+                return;
+            }
 
-                        player.load(track, true, start_position);
-                        player.await_end_of_track().await;
-                    }
-                    Err(error) => {
-                        error!("Failed to create session: {:?}", error);
-                        return;
-                    }
-                },
+            match track {
+                Ok(track) => {
+                    let (mut player, _) =
+                        Player::new(player_config, session, Box::new(NoOpVolume), move || {
+                            backend(None, audio_format)
+                        });
+
+                    player.load(track, true, start_position);
+                    player.await_end_of_track().await;
+                }
                 Err(error) => {
-                    error!("Problem getting a Spotify ID for {}: {:?}", track_id, error);
+                    error!("Failed to create session: {:?}", error);
                     return;
                 }
             };

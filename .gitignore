@@ -5,7 +5,7 @@ spotify_appkey.key
 .project
 .history
 *.save
-
-client_id.txt
+*.*~
 
 releases
+client_id.txt

@@ -1,38 +1,42 @@
 #[macro_use]
 extern crate serde_json;
 
-use futures_util::{future, FutureExt, StreamExt};
-use librespot_playback::player::PlayerEvent;
+use std::{
+    env,
+    fs::create_dir_all,
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+    pin::Pin,
+    process::exit,
+    str::FromStr,
+    time::{Duration, Instant},
+};
+
+use futures_util::StreamExt;
 use log::{error, info, trace, warn};
 use sha1::{Digest, Sha1};
 use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
 
-use librespot::connect::spirc::Spirc;
-use librespot::core::authentication::Credentials;
-use librespot::core::cache::Cache;
-use librespot::core::config::{ConnectConfig, DeviceType, SessionConfig};
-use librespot::core::session::Session;
-use librespot::core::version;
-use librespot::playback::audio_backend::{self, SinkBuilder};
-use librespot::playback::config::{
-    AudioFormat, Bitrate, NormalisationMethod, NormalisationType, PlayerConfig, VolumeCtrl,
-};
 use librespot::playback::mixer::softmixer::SoftMixer;
-use librespot::playback::mixer::{self, MixerConfig, MixerFn};
-use librespot::playback::player::Player;
+use librespot::{
+    connect::{config::ConnectConfig, spirc::Spirc},
+    core::{
+        authentication::Credentials, cache::Cache, config::DeviceType, version, Session,
+        SessionConfig,
+    },
+    playback::{
+        audio_backend::{self, SinkBuilder},
+        config::{
+            AudioFormat, Bitrate, NormalisationMethod, NormalisationType, PlayerConfig, VolumeCtrl,
+        },
+        mixer::{self, MixerConfig, MixerFn},
+        player::{Player, PlayerEvent},
+    },
+};
 
 mod spotty;
 use spotty::LMS;
-
-use std::env;
-use std::ops::RangeInclusive;
-use std::path::Path;
-use std::pin::Pin;
-use std::process::exit;
-use std::str::FromStr;
-use std::time::Duration;
-use std::time::Instant;
 
 const VERSION: &'static str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
@@ -159,6 +163,7 @@ fn get_setup() -> Setup {
     const SINGLE_TRACK: &str = "single-track";
     const START_POSITION: &str = "start-position";
     const QUIET: &str = "quiet";
+    const TEMP_DIR: &str = "tmp";
     const USERNAME: &str = "username";
     const VERBOSE: &str = "verbose";
     const VERSION: &str = "version";
@@ -192,7 +197,7 @@ fn get_setup() -> Setup {
     const PROXY_SHORT: &str = "";
     const ZEROCONF_PORT_SHORT: &str = "z";
 
-    // Options that have different desc's
+    // Options that have different descriptions
     // depending on what backends were enabled at build time.
     const INITIAL_VOLUME_DESC: &str = "Initial volume in % from 0 - 100. Defaults to 50.";
 
@@ -265,9 +270,15 @@ fn get_setup() -> Setup {
         "BITRATE",
     )
     .optopt(
+        "",
+        TEMP_DIR,
+        "Path to a directory where files will be temporarily stored while downloading.",
+        "PATH",
+    )
+    .optopt(
         CACHE_SHORT,
         CACHE,
-        "Path to a directory where files will be cached.",
+        "Path to a directory where files will be cached after downloading.",
         "PATH",
     )
     .optopt(
@@ -380,6 +391,13 @@ fn get_setup() -> Setup {
         PLAYER_MAC,
         "MAC address of the Squeezebox to be controlled",
         "MAC"
+    );
+
+    #[cfg(feature = "passthrough-decoder")]
+    opts.optflag(
+        PASSTHROUGH_SHORT,
+        PASSTHROUGH,
+        "Pass a raw stream to the output. Only works with the pipe and subprocess backends.",
     );
 
     let args: Vec<_> = std::env::args_os()
@@ -554,6 +572,15 @@ fn get_setup() -> Setup {
         }
     };
 
+    let tmp_dir = opt_str(TEMP_DIR).map_or(SessionConfig::default().tmp_dir, |p| {
+        let tmp_dir = PathBuf::from(p);
+        if let Err(e) = create_dir_all(&tmp_dir) {
+            error!("could not create or access specified tmp directory: {}", e);
+            exit(1);
+        }
+        tmp_dir
+    });
+
     let cache = {
         let volume_dir = opt_str(CACHE).map(|p| p.into());
 
@@ -706,38 +733,30 @@ fn get_setup() -> Setup {
 
         let device_type = DeviceType::default();
         let has_volume_ctrl = !matches!(mixer_config.volume_ctrl, VolumeCtrl::Fixed);
-        let autoplay = opt_present(AUTOPLAY);
 
         ConnectConfig {
             name,
             device_type,
             initial_volume,
             has_volume_ctrl,
-            autoplay,
         }
     };
 
     let session_config = SessionConfig {
-        user_agent: version::VERSION_STRING.to_string(),
         device_id: device_id(&connect_config.name),
         proxy: opt_str(PROXY).or_else(|| std::env::var("http_proxy").ok()).map(
             |s| {
                 match Url::parse(&s) {
                     Ok(url) => {
                         if url.host().is_none() || url.port_or_known_default().is_none() {
-                            error!("Invalid proxy url, only URLs on the format \"http://host:port\" are allowed");
-                            exit(1);
-                        }
-
-                        if url.scheme() != "http" {
-                            error!("Only unsecure http:// proxies are supported");
+                            error!("Invalid proxy url, only URLs on the format \"http(s)://host:port\" are allowed");
                             exit(1);
                         }
 
                         url
                     },
                     Err(e) => {
-                        error!("Invalid proxy URL: \"{}\", only URLs in the format \"http://host:port\" are allowed", e);
+                        error!("Invalid proxy URL: \"{}\", only URLs in the format \"http(s)://host:port\" are allowed", e);
                         exit(1);
                     }
                 }
@@ -752,6 +771,8 @@ fn get_setup() -> Setup {
                 exit(1);
             }
         }),
+		tmp_dir,
+        ..SessionConfig::default()
     };
 
     let player_config = {
@@ -889,7 +910,9 @@ async fn main() {
     let mut player_event_channel: Option<UnboundedReceiver<PlayerEvent>> = None;
     let mut auto_connect_times: Vec<Instant> = vec![];
     let mut discovery = None;
-    let mut connecting: Pin<Box<dyn future::FusedFuture<Output = _>>> = Box::pin(future::pending());
+    let mut connecting = false;
+
+    let session = Session::new(setup.session_config.clone(), setup.cache.clone());
 
     if setup.enable_discovery {
         let device_id = setup.session_config.device_id.clone();
@@ -905,16 +928,8 @@ async fn main() {
     }
 
     if let Some(credentials) = setup.credentials {
-        last_credentials = Some(credentials.clone());
-        connecting = Box::pin(
-            Session::connect(
-                setup.session_config.clone(),
-                credentials,
-                setup.cache.clone(),
-                true,
-            )
-            .fuse(),
-        );
+        last_credentials = Some(credentials);
+        connecting = true;
     } else if discovery.is_none() {
         error!(
             "Discovery is unavailable and no credentials provided. Authentication is not possible."
@@ -958,19 +973,16 @@ async fn main() {
                         auto_connect_times.clear();
 
                         if let Some(spirc) = spirc.take() {
-                            spirc.shutdown();
+                            if let Err(e) = spirc.shutdown() {
+                                error!("error sending spirc shutdown message: {}", e);
+                            }
                         }
                         if let Some(spirc_task) = spirc_task.take() {
                             // Continue shutdown in its own task
                             tokio::spawn(spirc_task);
                         }
 
-                        connecting = Box::pin(Session::connect(
-                            setup.session_config.clone(),
-                            credentials,
-                            setup.cache.clone(),
-                            true,
-                        ).fuse());
+                        connecting = true;
                     },
                     None => {
                         error!("Discovery stopped unexpectedly");
@@ -978,44 +990,45 @@ async fn main() {
                     }
                 }
             },
-            session = &mut connecting, if !connecting.is_terminated() => match session {
-                Ok((session,_)) => {
-                    // Spotty auth mode: exit after saving credentials
-                    if setup.authenticate {
-                        println!("authorized");
-                        break;
-                    }
-
-                    let mixer_config = setup.mixer_config.clone();
-                    let mixer = (setup.mixer)(mixer_config);
-                    let player_config = setup.player_config.clone();
-                    let connect_config = setup.connect_config.clone();
-
-                    let soft_volume = mixer.get_soft_volume();
-                    let format = setup.format;
-                    let backend = setup.backend;
-                    let device = Some(NULLDEVICE.to_string());
-                    let (player, event_channel) =
-                        Player::new(player_config, session.clone(), soft_volume, move || {
-                            (backend)(device, format)
-                        });
-
-                    let (spirc_, spirc_task_) = Spirc::new(connect_config, session, player, mixer);
-
-                    spirc = Some(spirc_);
-                    spirc_task = Some(Box::pin(spirc_task_));
-                    player_event_channel = Some(event_channel);
-                },
-                Err(e) => {
-                    error!("Connection failed: {}", e);
-                    exit(1);
+            _ = async {}, if connecting && last_credentials.is_some() => {
+                // Spotty auth mode: exit after saving credentials
+                if setup.authenticate {
+                    println!("authorized");
+                    break;
                 }
+
+                let mixer_config = setup.mixer_config.clone();
+                let mixer = (setup.mixer)(mixer_config);
+                let player_config = setup.player_config.clone();
+                let connect_config = setup.connect_config.clone();
+
+                let soft_volume = mixer.get_soft_volume();
+                let format = setup.format;
+                let backend = setup.backend;
+                let device = Some(NULLDEVICE.to_string());
+                let (player, event_channel) =
+                    Player::new(player_config, session.clone(), soft_volume, move || {
+                        (backend)(device, format)
+                    });
+
+                let (spirc_, spirc_task_) = match Spirc::new(connect_config, session.clone(), last_credentials.clone().unwrap(), player, mixer).await {
+                    Ok((spirc_, spirc_task_)) => (spirc_, spirc_task_),
+                    Err(e) => {
+                        error!("could not initialize spirc: {}", e);
+                        exit(1);
+                    }
+                };
+                spirc = Some(spirc_);
+                spirc_task = Some(Box::pin(spirc_task_));
+                player_event_channel = Some(event_channel);
+
+                connecting = false;
             },
             _ = async {
                 if let Some(task) = spirc_task.as_mut() {
                     task.await;
                 }
-            }, if spirc_task.is_some() => {
+            }, if spirc_task.is_some() && !connecting => {
                 spirc_task = None;
 
                 warn!("Spirc shut down unexpectedly");
@@ -1026,15 +1039,9 @@ async fn main() {
                 };
 
                 match last_credentials.clone() {
-                    Some(credentials) if !reconnect_exceeds_rate_limit() => {
+                    Some(_) if !reconnect_exceeds_rate_limit() => {
                         auto_connect_times.push(Instant::now());
-
-                        connecting = Box::pin(Session::connect(
-                            setup.session_config.clone(),
-                            credentials,
-                            setup.cache.clone(),
-                            true
-                        ).fuse());
+                        connecting = true;
                     },
                     _ => {
                         error!("Spirc shut down too often. Not reconnecting automatically.");
@@ -1066,7 +1073,9 @@ async fn main() {
 
     // Shutdown spirc if necessary
     if let Some(spirc) = spirc {
-        spirc.shutdown();
+        if let Err(e) = spirc.shutdown() {
+            error!("error sending spirc shutdown message: {}", e);
+        }
 
         if let Some(mut spirc_task) = spirc_task {
             tokio::select! {
