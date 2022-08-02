@@ -990,13 +990,12 @@ async fn main() {
                     }
                 }
             },
+            // Spotty auth mode: exit after saving credentials
+            _ = async {}, if setup.authenticate && !connecting && last_credentials.is_some() => {
+                println!("authorized");
+                break;
+            },
             _ = async {}, if connecting && last_credentials.is_some() => {
-                // Spotty auth mode: exit after saving credentials
-                if setup.authenticate {
-                    println!("authorized");
-                    break;
-                }
-
                 let mixer_config = setup.mixer_config.clone();
                 let mixer = (setup.mixer)(mixer_config);
                 let player_config = setup.player_config.clone();
