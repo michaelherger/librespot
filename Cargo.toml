@@ -1,6 +1,7 @@
 [package]
 name = "spotty"
 version = "1.3.99"
+rust-version = "1.61"
 authors = ["Librespot Org", "Michael Herger <michael@herger.net>"]
 license = "MIT"
 keywords = ["spotify"]
