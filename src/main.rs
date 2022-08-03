@@ -134,7 +134,6 @@ struct Setup {
 
 fn get_setup() -> Setup {
     const VALID_INITIAL_VOLUME_RANGE: RangeInclusive<u16> = 0..=100;
-    const AP_PORT: &str = "ap-port";
     const AUTHENTICATE: &str = "authenticate";
     const AUTOPLAY: &str = "autoplay";
     const BITRATE: &str = "bitrate";
@@ -172,7 +171,6 @@ fn get_setup() -> Setup {
     // Mostly arbitrary.
     const AUTHENTICATE_SHORT: &str = "a";
     const AUTOPLAY_SHORT: &str = "A";
-    const AP_PORT_SHORT: &str = "";
     const BITRATE_SHORT: &str = "b";
     const CACHE_SHORT: &str = "c";
     const DISABLE_AUDIO_CACHE_SHORT: &str = "G";
@@ -316,12 +314,6 @@ fn get_setup() -> Setup {
         PROXY,
         "HTTP proxy to use when connecting.",
         "URL",
-    )
-    .optopt(
-        AP_PORT_SHORT,
-        AP_PORT,
-        "Connect to an AP with a specified port 1 - 65535. If no AP with that port is present a fallback AP will be used. Available ports are usually 80, 443 and 4070.",
-        "PORT",
     )
     // spotty
     .optflag(
@@ -762,15 +754,6 @@ fn get_setup() -> Setup {
                 }
             },
         ),
-        ap_port: opt_str(AP_PORT).map(|port| match port.parse::<u16>() {
-            Ok(value) if value != 0 => value,
-            _ => {
-                let valid_values = &format!("1 - {}", u16::MAX);
-                invalid_error_msg(AP_PORT, AP_PORT_SHORT, &port, valid_values, "");
-
-                exit(1);
-            }
-        }),
 		tmp_dir,
         ..SessionConfig::default()
     };

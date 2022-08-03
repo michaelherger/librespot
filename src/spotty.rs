@@ -29,14 +29,16 @@ pub fn check(version_info: String) {
     println!("ok {}", version_info.to_string());
 
     let capabilities = json!({
-        "version": env!("CARGO_PKG_VERSION").to_string(),
         "autoplay": true,
-        "lms-auth": true,
-        "volume-normalisation": true,
         "debug": DEBUGMODE,
+        "lms-auth": true,
+        "no-ap-port": true,
         "ogg-direct": true,
-        "save-token": true,
         "podcasts": true,
+        "save-token": true,
+        "temp-dir": true,
+        "version": env!("CARGO_PKG_VERSION").to_string(),
+        "volume-normalisation": true,
         "zeroconf-port": true
     });
 
