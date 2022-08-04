@@ -9,7 +9,7 @@ use futures_util::future::IntoStream;
 use http::header::HeaderValue;
 use hyper::{
     client::ResponseFuture,
-    header::{ACCEPT, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, RANGE},
+    header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_ENCODING, CONTENT_TYPE, RANGE},
     Body, HeaderMap, Method, Request,
 };
 use protobuf::Message;
@@ -19,6 +19,7 @@ use thiserror::Error;
 use crate::{
     apresolve::SocketAddress,
     cdn_url::CdnUrl,
+    config::KEYMASTER_CLIENT_ID,
     error::ErrorKind,
     protocol::{
         canvaz::EntityCanvazRequest,
@@ -39,6 +40,9 @@ component! {
 }
 
 pub type SpClientResult = Result<Bytes, Error>;
+
+#[allow(clippy::declare_interior_mutable_const)]
+const CLIENT_TOKEN: HeaderName = HeaderName::from_static("client-token");
 
 #[derive(Debug, Error)]
 pub enum SpClientError {
@@ -116,7 +120,7 @@ impl SpClient {
         message.set_request_type(ClientTokenRequestType::REQUEST_CLIENT_DATA_REQUEST);
 
         let client_data = message.mut_client_data();
-        client_data.set_client_id(self.session().client_id());
+        client_data.set_client_id(KEYMASTER_CLIENT_ID.to_string());
         client_data.set_client_version(version::SEMVER.to_string());
 
         let connectivity_data = client_data.mut_connectivity_sdk_data();
@@ -231,7 +235,7 @@ impl SpClient {
             HeaderValue::from_static("application/x-protobuf"),
         );
 
-        self.request(method, endpoint, Some(headers), Some(body))
+        self.request(method, endpoint, Some(headers), Some(&body))
             .await
     }
 
@@ -240,7 +244,7 @@ impl SpClient {
         method: &Method,
         endpoint: &str,
         headers: Option<HeaderMap>,
-        body: Option<String>,
+        body: Option<&str>,
     ) -> SpClientResult {
         let mut headers = headers.unwrap_or_else(HeaderMap::new);
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
@@ -253,7 +257,7 @@ impl SpClient {
         method: &Method,
         endpoint: &str,
         headers: Option<HeaderMap>,
-        body: Option<String>,
+        body: Option<&str>,
     ) -> SpClientResult {
         let mut tries: usize = 0;
         let mut last_response;
@@ -279,7 +283,7 @@ impl SpClient {
             let mut request = Request::builder()
                 .method(method)
                 .uri(url)
-                .body(Body::from(body.clone()))?;
+                .body(Body::from(body.to_owned()))?;
 
             // Reconnection logic: keep getting (cached) tokens because they might have expired.
             let token = self
@@ -287,6 +291,7 @@ impl SpClient {
                 .token_provider()
                 .get_token("playlist-read")
                 .await?;
+            let client_token = self.client_token().await?;
 
             let headers_mut = request.headers_mut();
             if let Some(ref hdrs) = headers {
@@ -296,6 +301,7 @@ impl SpClient {
                 AUTHORIZATION,
                 HeaderValue::from_str(&format!("{} {}", token.token_type, token.access_token,))?,
             );
+            headers_mut.insert(CLIENT_TOKEN, HeaderValue::from_str(&client_token)?);
 
             last_response = self.session().http_client().request_body(request).await;
 
@@ -342,45 +348,45 @@ impl SpClient {
 
     pub async fn put_connect_state(
         &self,
-        connection_id: String,
-        state: PutStateRequest,
+        connection_id: &str,
+        state: &PutStateRequest,
     ) -> SpClientResult {
         let endpoint = format!("/connect-state/v1/devices/{}", self.session().device_id());
 
         let mut headers = HeaderMap::new();
         headers.insert("X-Spotify-Connection-Id", connection_id.parse()?);
 
-        self.request_with_protobuf(&Method::PUT, &endpoint, Some(headers), &state)
+        self.request_with_protobuf(&Method::PUT, &endpoint, Some(headers), state)
             .await
     }
 
-    pub async fn get_metadata(&self, scope: &str, id: SpotifyId) -> SpClientResult {
+    pub async fn get_metadata(&self, scope: &str, id: &SpotifyId) -> SpClientResult {
         let endpoint = format!("/metadata/4/{}/{}", scope, id.to_base16()?);
         self.request(&Method::GET, &endpoint, None, None).await
     }
 
-    pub async fn get_track_metadata(&self, track_id: SpotifyId) -> SpClientResult {
+    pub async fn get_track_metadata(&self, track_id: &SpotifyId) -> SpClientResult {
         self.get_metadata("track", track_id).await
     }
 
-    pub async fn get_episode_metadata(&self, episode_id: SpotifyId) -> SpClientResult {
+    pub async fn get_episode_metadata(&self, episode_id: &SpotifyId) -> SpClientResult {
         self.get_metadata("episode", episode_id).await
     }
 
-    pub async fn get_album_metadata(&self, album_id: SpotifyId) -> SpClientResult {
+    pub async fn get_album_metadata(&self, album_id: &SpotifyId) -> SpClientResult {
         self.get_metadata("album", album_id).await
     }
 
-    pub async fn get_artist_metadata(&self, artist_id: SpotifyId) -> SpClientResult {
+    pub async fn get_artist_metadata(&self, artist_id: &SpotifyId) -> SpClientResult {
         self.get_metadata("artist", artist_id).await
     }
 
-    pub async fn get_show_metadata(&self, show_id: SpotifyId) -> SpClientResult {
+    pub async fn get_show_metadata(&self, show_id: &SpotifyId) -> SpClientResult {
         self.get_metadata("show", show_id).await
     }
 
-    pub async fn get_lyrics(&self, track_id: SpotifyId) -> SpClientResult {
-        let endpoint = format!("/color-lyrics/v1/track/{}", track_id.to_base62()?);
+    pub async fn get_lyrics(&self, track_id: &SpotifyId) -> SpClientResult {
+        let endpoint = format!("/color-lyrics/v2/track/{}", track_id.to_base62()?);
 
         self.request_as_json(&Method::GET, &endpoint, None, None)
             .await
@@ -388,13 +394,91 @@ impl SpClient {
 
     pub async fn get_lyrics_for_image(
         &self,
-        track_id: SpotifyId,
-        image_id: FileId,
+        track_id: &SpotifyId,
+        image_id: &FileId,
     ) -> SpClientResult {
         let endpoint = format!(
             "/color-lyrics/v2/track/{}/image/spotify:image:{}",
             track_id.to_base62()?,
             image_id
+        );
+
+        self.request_as_json(&Method::GET, &endpoint, None, None)
+            .await
+    }
+
+    pub async fn get_playlist(&self, playlist_id: &SpotifyId) -> SpClientResult {
+        let endpoint = format!("/playlist/v2/playlist/{}", playlist_id.to_base62()?);
+
+        self.request(&Method::GET, &endpoint, None, None).await
+    }
+
+    pub async fn get_user_profile(
+        &self,
+        username: &str,
+        playlist_limit: Option<u32>,
+        artist_limit: Option<u32>,
+    ) -> SpClientResult {
+        let mut endpoint = format!("/user-profile-view/v3/profile/{}", username);
+
+        if playlist_limit.is_some() || artist_limit.is_some() {
+            let _ = write!(endpoint, "?");
+
+            if let Some(limit) = playlist_limit {
+                let _ = write!(endpoint, "playlist_limit={}", limit);
+                if artist_limit.is_some() {
+                    let _ = write!(endpoint, "&");
+                }
+            }
+
+            if let Some(limit) = artist_limit {
+                let _ = write!(endpoint, "artist_limit={}", limit);
+            }
+        }
+
+        self.request_as_json(&Method::GET, &endpoint, None, None)
+            .await
+    }
+
+    pub async fn get_user_followers(&self, username: &str) -> SpClientResult {
+        let endpoint = format!("/user-profile-view/v3/profile/{}/followers", username);
+
+        self.request_as_json(&Method::GET, &endpoint, None, None)
+            .await
+    }
+
+    pub async fn get_user_following(&self, username: &str) -> SpClientResult {
+        let endpoint = format!("/user-profile-view/v3/profile/{}/following", username);
+
+        self.request_as_json(&Method::GET, &endpoint, None, None)
+            .await
+    }
+
+    pub async fn get_radio_for_track(&self, track_id: &SpotifyId) -> SpClientResult {
+        let endpoint = format!(
+            "/inspiredby-mix/v2/seed_to_playlist/{}?response-format=json",
+            track_id.to_uri()?
+        );
+
+        self.request_as_json(&Method::GET, &endpoint, None, None)
+            .await
+    }
+
+    pub async fn get_apollo_station(
+        &self,
+        context_uri: &str,
+        count: u32,
+        previous_tracks: Vec<&SpotifyId>,
+        autoplay: bool,
+    ) -> SpClientResult {
+        let previous_track_str = previous_tracks
+            .iter()
+            .map(|track| track.to_uri())
+            .collect::<Result<Vec<_>, _>>()?
+            .join(",");
+        let endpoint = format!(
+            "/radio-apollo/v3/stations/{}?count={}&prev_tracks={}&autoplay={}",
+            context_uri, count, previous_track_str, autoplay,
         );
 
         self.request_as_json(&Method::GET, &endpoint, None, None)
@@ -414,7 +498,7 @@ impl SpClient {
             .await
     }
 
-    pub async fn get_audio_storage(&self, file_id: FileId) -> SpClientResult {
+    pub async fn get_audio_storage(&self, file_id: &FileId) -> SpClientResult {
         let endpoint = format!(
             "/storage-resolve/files/audio/interactive/{}",
             file_id.to_base16()?
@@ -443,7 +527,7 @@ impl SpClient {
         Ok(stream)
     }
 
-    pub async fn request_url(&self, url: String) -> SpClientResult {
+    pub async fn request_url(&self, url: &str) -> SpClientResult {
         let request = Request::builder()
             .method(&Method::GET)
             .uri(url)
@@ -467,11 +551,11 @@ impl SpClient {
         };
         let _ = write!(url, "{}cid={}", separator, self.session().client_id());
 
-        self.request_url(url).await
+        self.request_url(&url).await
     }
 
     // The first 128 kB of a track, unencrypted
-    pub async fn get_head_file(&self, file_id: FileId) -> SpClientResult {
+    pub async fn get_head_file(&self, file_id: &FileId) -> SpClientResult {
         let attribute = "head-files-url";
         let template = self
             .session()
@@ -480,10 +564,10 @@ impl SpClient {
 
         let url = template.replace("{file_id}", &file_id.to_base16()?);
 
-        self.request_url(url).await
+        self.request_url(&url).await
     }
 
-    pub async fn get_image(&self, image_id: FileId) -> SpClientResult {
+    pub async fn get_image(&self, image_id: &FileId) -> SpClientResult {
         let attribute = "image-url";
         let template = self
             .session()
@@ -491,6 +575,6 @@ impl SpClient {
             .ok_or_else(|| SpClientError::Attribute(attribute.to_string()))?;
         let url = template.replace("{file_id}", &image_id.to_base16()?);
 
-        self.request_url(url).await
+        self.request_url(&url).await
     }
 }

@@ -1,7 +1,7 @@
 use std::{
     convert::{TryFrom, TryInto},
     fmt::Debug,
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 
 use uuid::Uuid;
@@ -17,7 +17,7 @@ use crate::{
     external_id::ExternalIds,
     restriction::Restrictions,
     sale_period::SalePeriods,
-    util::try_from_repeated_message,
+    util::{impl_deref_wrapped, impl_try_from_repeated},
     Album, Metadata, RequestResult,
 };
 
@@ -56,17 +56,12 @@ pub struct Track {
 #[derive(Debug, Clone, Default)]
 pub struct Tracks(pub Vec<SpotifyId>);
 
-impl Deref for Tracks {
-    type Target = Vec<SpotifyId>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+impl_deref_wrapped!(Tracks, Vec<SpotifyId>);
 
 #[async_trait]
 impl InnerAudioItem for Track {
     async fn get_audio_item(session: &Session, id: SpotifyId) -> AudioItemResult {
-        let track = Self::get(session, id).await?;
+        let track = Self::get(session, &id).await?;
         let alternatives = {
             if track.alternatives.is_empty() {
                 None
@@ -103,11 +98,11 @@ impl InnerAudioItem for Track {
 impl Metadata for Track {
     type Message = protocol::metadata::Track;
 
-    async fn request(session: &Session, track_id: SpotifyId) -> RequestResult {
+    async fn request(session: &Session, track_id: &SpotifyId) -> RequestResult {
         session.spclient().get_track_metadata(track_id).await
     }
 
-    fn parse(msg: &Self::Message, _: SpotifyId) -> Result<Self, Error> {
+    fn parse(msg: &Self::Message, _: &SpotifyId) -> Result<Self, Error> {
         Self::try_from(msg)
     }
 }
@@ -146,4 +141,4 @@ impl TryFrom<&<Self as Metadata>::Message> for Track {
     }
 }
 
-try_from_repeated_message!(<Track as Metadata>::Message, Tracks);
+impl_try_from_repeated!(<Track as Metadata>::Message, Tracks);

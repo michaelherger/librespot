@@ -1,14 +1,12 @@
 use std::{
     convert::{TryFrom, TryInto},
     fmt::Debug,
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 
-use protobuf::Message;
-
 use crate::{
-    request::{MercuryRequest, RequestResult},
-    util::{from_repeated_enum, try_from_repeated_message},
+    request::RequestResult,
+    util::{impl_deref_wrapped, impl_from_repeated_copy, impl_try_from_repeated},
     Metadata,
 };
 
@@ -29,12 +27,7 @@ use protocol::playlist4_external::GeoblockBlockingType as Geoblock;
 #[derive(Debug, Clone, Default)]
 pub struct Geoblocks(Vec<Geoblock>);
 
-impl Deref for Geoblocks {
-    type Target = Vec<Geoblock>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+impl_deref_wrapped!(Geoblocks, Vec<Geoblock>);
 
 #[derive(Debug, Clone)]
 pub struct Playlist {
@@ -58,22 +51,7 @@ pub struct Playlist {
 #[derive(Debug, Clone, Default)]
 pub struct Playlists(pub Vec<SpotifyId>);
 
-impl Deref for Playlists {
-    type Target = Vec<SpotifyId>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct RootPlaylist(pub SelectedListContent);
-
-impl Deref for RootPlaylist {
-    type Target = SelectedListContent;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+impl_deref_wrapped!(Playlists, Vec<SpotifyId>);
 
 #[derive(Debug, Clone)]
 pub struct SelectedListContent {
@@ -95,38 +73,8 @@ pub struct SelectedListContent {
 }
 
 impl Playlist {
-    #[allow(dead_code)]
-    async fn request_for_user(
-        session: &Session,
-        username: &str,
-        playlist_id: SpotifyId,
-    ) -> RequestResult {
-        let uri = format!(
-            "hm://playlist/user/{}/playlist/{}",
-            username,
-            playlist_id.to_base62()?
-        );
-        <Self as MercuryRequest>::request(session, &uri).await
-    }
-
-    #[allow(dead_code)]
-    pub async fn get_for_user(
-        session: &Session,
-        username: &str,
-        playlist_id: SpotifyId,
-    ) -> Result<Self, Error> {
-        let response = Self::request_for_user(session, username, playlist_id).await?;
-        let msg = <Self as Metadata>::Message::parse_from_bytes(&response)?;
-        Self::parse(&msg, playlist_id)
-    }
-
-    pub fn tracks(&self) -> Vec<SpotifyId> {
-        let tracks = self
-            .contents
-            .items
-            .iter()
-            .map(|item| item.id)
-            .collect::<Vec<_>>();
+    pub fn tracks(&self) -> impl ExactSizeIterator<Item = &SpotifyId> {
+        let tracks = self.contents.items.iter().map(|item| &item.id);
 
         let length = tracks.len();
         let expected_length = self.length as usize;
@@ -145,21 +93,18 @@ impl Playlist {
     }
 }
 
-impl MercuryRequest for Playlist {}
-
 #[async_trait]
 impl Metadata for Playlist {
     type Message = protocol::playlist4_external::SelectedListContent;
 
-    async fn request(session: &Session, playlist_id: SpotifyId) -> RequestResult {
-        let uri = format!("hm://playlist/v2/playlist/{}", playlist_id.to_base62()?);
-        <Self as MercuryRequest>::request(session, &uri).await
+    async fn request(session: &Session, playlist_id: &SpotifyId) -> RequestResult {
+        session.spclient().get_playlist(playlist_id).await
     }
 
-    fn parse(msg: &Self::Message, id: SpotifyId) -> Result<Self, Error> {
+    fn parse(msg: &Self::Message, id: &SpotifyId) -> Result<Self, Error> {
         // the playlist proto doesn't contain the id so we decorate it
         let playlist = SelectedListContent::try_from(msg)?;
-        let id = NamedSpotifyId::from_spotify_id(id, playlist.owner_username);
+        let id = NamedSpotifyId::from_spotify_id(*id, &playlist.owner_username);
 
         Ok(Self {
             id,
@@ -178,23 +123,6 @@ impl Metadata for Playlist {
             capabilities: playlist.capabilities,
             geoblocks: playlist.geoblocks,
         })
-    }
-}
-
-impl MercuryRequest for RootPlaylist {}
-
-impl RootPlaylist {
-    #[allow(dead_code)]
-    async fn request_for_user(session: &Session, username: &str) -> RequestResult {
-        let uri = format!("hm://playlist/user/{}/rootlist", username,);
-        <Self as MercuryRequest>::request(session, &uri).await
-    }
-
-    #[allow(dead_code)]
-    pub async fn get_root_for_user(session: &Session, username: &str) -> Result<Self, Error> {
-        let response = Self::request_for_user(session, username).await?;
-        let msg = protocol::playlist4_external::SelectedListContent::parse_from_bytes(&response)?;
-        Ok(Self(SelectedListContent::try_from(&msg)?))
     }
 }
 
@@ -225,5 +153,5 @@ impl TryFrom<&<Playlist as Metadata>::Message> for SelectedListContent {
     }
 }
 
-from_repeated_enum!(Geoblock, Geoblocks);
-try_from_repeated_message!(Vec<u8>, Playlists);
+impl_from_repeated_copy!(Geoblock, Geoblocks);
+impl_try_from_repeated!(Vec<u8>, Playlists);

@@ -163,7 +163,7 @@ impl SpotifyId {
     /// can be arbitrary while `{id}` is a 22-character long, base62 encoded Spotify ID.
     ///
     /// Note that this should not be used for playlists, which have the form of
-    /// `spotify:user:{owner_username}:playlist:{id}`.
+    /// `spotify:playlist:{id}`.
     ///
     /// [Spotify URI]: https://developer.spotify.com/documentation/web-api/#spotify-uris-and-ids
     pub fn from_uri(src: &str) -> SpotifyIdResult {
@@ -274,7 +274,7 @@ impl SpotifyId {
 }
 
 impl fmt::Debug for SpotifyId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("SpotifyId")
             .field(&self.to_uri().unwrap_or_else(|_| "invalid uri".into()))
             .finish()
@@ -282,7 +282,7 @@ impl fmt::Debug for SpotifyId {
 }
 
 impl fmt::Display for SpotifyId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.to_uri().unwrap_or_else(|_| "invalid uri".into()))
     }
 }
@@ -329,10 +329,10 @@ impl NamedSpotifyId {
         Ok(dst)
     }
 
-    pub fn from_spotify_id(id: SpotifyId, username: String) -> Self {
+    pub fn from_spotify_id(id: SpotifyId, username: &str) -> Self {
         Self {
             inner_id: id,
-            username,
+            username: username.to_owned(),
         }
     }
 }
@@ -345,7 +345,7 @@ impl Deref for NamedSpotifyId {
 }
 
 impl fmt::Debug for NamedSpotifyId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("NamedSpotifyId")
             .field(
                 &self
@@ -358,7 +358,7 @@ impl fmt::Debug for NamedSpotifyId {
 }
 
 impl fmt::Display for NamedSpotifyId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(
             &self
                 .inner_id

@@ -7,7 +7,7 @@ license = "MIT"
 keywords = ["spotify"]
 repository = "https://github.com/michaelherger/librespot"
 readme = "README.md"
-edition = "2018"
+edition = "2021"
 
 [workspace]
 

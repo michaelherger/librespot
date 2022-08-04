@@ -1,7 +1,7 @@
 use std::{
     convert::{TryFrom, TryInto},
     fmt::Debug,
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
     image::Images,
     request::RequestResult,
     restriction::Restrictions,
-    util::try_from_repeated_message,
+    util::{impl_deref_wrapped, impl_try_from_repeated},
     video::VideoFiles,
     Metadata,
 };
@@ -55,17 +55,12 @@ pub struct Episode {
 #[derive(Debug, Clone, Default)]
 pub struct Episodes(pub Vec<SpotifyId>);
 
-impl Deref for Episodes {
-    type Target = Vec<SpotifyId>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+impl_deref_wrapped!(Episodes, Vec<SpotifyId>);
 
 #[async_trait]
 impl InnerAudioItem for Episode {
     async fn get_audio_item(session: &Session, id: SpotifyId) -> AudioItemResult {
-        let episode = Self::get(session, id).await?;
+        let episode = Self::get(session, &id).await?;
         let availability = Self::available_for_user(
             &session.user_data(),
             &episode.availability,
@@ -89,11 +84,11 @@ impl InnerAudioItem for Episode {
 impl Metadata for Episode {
     type Message = protocol::metadata::Episode;
 
-    async fn request(session: &Session, episode_id: SpotifyId) -> RequestResult {
+    async fn request(session: &Session, episode_id: &SpotifyId) -> RequestResult {
         session.spclient().get_episode_metadata(episode_id).await
     }
 
-    fn parse(msg: &Self::Message, _: SpotifyId) -> Result<Self, Error> {
+    fn parse(msg: &Self::Message, _: &SpotifyId) -> Result<Self, Error> {
         Self::try_from(msg)
     }
 }
@@ -130,4 +125,4 @@ impl TryFrom<&<Self as Metadata>::Message> for Episode {
     }
 }
 
-try_from_repeated_message!(<Episode as Metadata>::Message, Episodes);
+impl_try_from_repeated!(<Episode as Metadata>::Message, Episodes);

@@ -2,7 +2,7 @@ use std::{fmt, path::PathBuf, str::FromStr};
 
 use url::Url;
 
-const KEYMASTER_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
+pub const KEYMASTER_CLIENT_ID: &str = "65b708073fc0480ea92a077233ca87bd";
 
 #[derive(Clone, Debug)]
 pub struct SessionConfig {
@@ -109,7 +109,7 @@ impl From<DeviceType> for &str {
 }
 
 impl fmt::Display for DeviceType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let str: &str = self.into();
         f.write_str(str)
     }

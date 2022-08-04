@@ -1,13 +1,21 @@
 use std::{
     convert::{TryFrom, TryInto},
     fmt::Debug,
-    ops::Deref,
+    ops::{Deref, DerefMut},
 };
 
 use crate::{
-    artist::Artists, availability::Availabilities, copyright::Copyrights, external_id::ExternalIds,
-    image::Images, request::RequestResult, restriction::Restrictions, sale_period::SalePeriods,
-    track::Tracks, util::try_from_repeated_message, Metadata,
+    artist::Artists,
+    availability::Availabilities,
+    copyright::Copyrights,
+    external_id::ExternalIds,
+    image::Images,
+    request::RequestResult,
+    restriction::Restrictions,
+    sale_period::SalePeriods,
+    track::Tracks,
+    util::{impl_deref_wrapped, impl_try_from_repeated},
+    Metadata,
 };
 
 use librespot_core::{date::Date, Error, Session, SpotifyId};
@@ -44,12 +52,7 @@ pub struct Album {
 #[derive(Debug, Clone, Default)]
 pub struct Albums(pub Vec<SpotifyId>);
 
-impl Deref for Albums {
-    type Target = Vec<SpotifyId>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+impl_deref_wrapped!(Albums, Vec<SpotifyId>);
 
 #[derive(Debug, Clone)]
 pub struct Disc {
@@ -61,21 +64,11 @@ pub struct Disc {
 #[derive(Debug, Clone, Default)]
 pub struct Discs(pub Vec<Disc>);
 
-impl Deref for Discs {
-    type Target = Vec<Disc>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+impl_deref_wrapped!(Discs, Vec<Disc>);
 
 impl Album {
-    pub fn tracks(&self) -> Tracks {
-        let result = self
-            .discs
-            .iter()
-            .flat_map(|disc| disc.tracks.deref().clone())
-            .collect();
-        Tracks(result)
+    pub fn tracks(&self) -> impl Iterator<Item = &SpotifyId> {
+        self.discs.iter().flat_map(|disc| disc.tracks.iter())
     }
 }
 
@@ -83,11 +76,11 @@ impl Album {
 impl Metadata for Album {
     type Message = protocol::metadata::Album;
 
-    async fn request(session: &Session, album_id: SpotifyId) -> RequestResult {
+    async fn request(session: &Session, album_id: &SpotifyId) -> RequestResult {
         session.spclient().get_album_metadata(album_id).await
     }
 
-    fn parse(msg: &Self::Message, _: SpotifyId) -> Result<Self, Error> {
+    fn parse(msg: &Self::Message, _: &SpotifyId) -> Result<Self, Error> {
         Self::try_from(msg)
     }
 }
@@ -121,7 +114,7 @@ impl TryFrom<&<Self as Metadata>::Message> for Album {
     }
 }
 
-try_from_repeated_message!(<Album as Metadata>::Message, Albums);
+impl_try_from_repeated!(<Album as Metadata>::Message, Albums);
 
 impl TryFrom<&DiscMessage> for Disc {
     type Error = librespot_core::Error;
@@ -134,4 +127,4 @@ impl TryFrom<&DiscMessage> for Disc {
     }
 }
 
-try_from_repeated_message!(DiscMessage, Discs);
+impl_try_from_repeated!(DiscMessage, Discs);
