@@ -4,7 +4,7 @@ use sha1::{Digest, Sha1};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let name = "Librespot";
+    let name = "Spotty";
     let device_id = hex::encode(Sha1::digest(name.as_bytes()));
 
     let mut server = librespot_discovery::Discovery::builder(device_id)

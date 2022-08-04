@@ -81,7 +81,7 @@ impl Builder {
     pub fn new(device_id: impl Into<String>) -> Self {
         Self {
             server_config: server::Config {
-                name: "Librespot".into(),
+                name: "Spotty".into(),
                 device_type: DeviceType::default(),
                 device_id: device_id.into(),
             },
@@ -89,7 +89,7 @@ impl Builder {
         }
     }
 
-    /// Sets the name to be displayed. Default is `"Librespot"`.
+    /// Sets the name to be displayed. Default is `"Spotty"`.
     pub fn name(mut self, name: impl Into<Cow<'static, str>>) -> Self {
         self.server_config.name = name.into();
         self
