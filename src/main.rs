@@ -854,7 +854,7 @@ fn get_setup() -> Setup {
         authenticate,
         single_track: opt_str(SINGLE_TRACK),
         start_position: (start_position * 1000.0) as u32,
-        get_token: opt_present(GET_TOKEN) || save_token.as_str().is_empty(),
+        get_token: opt_present(GET_TOKEN) || !save_token.as_str().is_empty(),
         save_token: if save_token.as_str().is_empty() {
             None
         } else {
