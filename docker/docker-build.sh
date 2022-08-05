@@ -24,4 +24,4 @@ function build {
 build arm-unknown-linux-gnueabihf arm-linux-gnueabihf-strip arm-linux/spotty-hf
 build aarch64-unknown-linux-gnu aarch64-linux-gnu-strip arm-linux/spotty-aarch64
 build x86_64-unknown-linux-musl strip i386-linux/spotty-x86_64
-build i686-unknown-linux-musl strip i386-linux/spotty
+# build i686-unknown-linux-musl strip i386-linux/spotty
