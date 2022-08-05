@@ -16,7 +16,7 @@ use librespot::playback::config::{AudioFormat, PlayerConfig};
 use librespot::playback::mixer::NoOpVolume;
 use librespot::playback::player::{Player, PlayerEvent};
 
-const VERSION: &'static str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
+const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
 const SCOPES: &str = "user-read-private,playlist-read-private,playlist-read-collaborative,playlist-modify-public,playlist-modify-private,user-follow-modify,user-follow-read,user-library-read,user-library-modify,user-top-read,user-read-recently-played";
 
@@ -26,7 +26,7 @@ const DEBUGMODE: bool = true;
 const DEBUGMODE: bool = false;
 
 pub fn check(version_info: String) {
-    println!("ok {}", version_info.to_string());
+    println!("ok {}", version_info);
 
     let capabilities = json!({
         "autoplay": true,
@@ -42,7 +42,7 @@ pub fn check(version_info: String) {
         "zeroconf-port": true
     });
 
-    println!("{}", capabilities.to_string());
+    println!("{}", capabilities);
     exit(0);
 }
 
@@ -57,7 +57,7 @@ pub async fn get_token(
     match last_credentials {
         Some(last_credentials) => {
             if let Some(client_id) = client_id {
-                let scopes = scopes.unwrap_or(SCOPES.to_string());
+                let scopes = scopes.unwrap_or_else(|| SCOPES.to_string());
                 let session = Session::new(session_config, None);
                 session.set_client_id(client_id.as_str());
 
@@ -66,7 +66,7 @@ pub async fn get_token(
                         Ok(token) => {
                             write_response(
                                 json!({
-                                    "accessToken": token.access_token.to_string(),
+                                    "accessToken": token.access_token,
                                     "expiresIn": token.expires_in,
                                 }),
                                 save_token,
@@ -104,7 +104,7 @@ pub async fn get_token(
 
 fn write_response(json_token: Value, save_token: Option<String>) {
     if let Some(save_token) = save_token {
-        fs::write(save_token.to_string(), json_token.to_string()).expect("Can't write token file");
+        fs::write(&save_token, json_token.to_string()).expect("Can't write token file");
     } else {
         println!("{}", json_token);
     }
@@ -148,7 +148,6 @@ pub async fn play_track(
                 }
                 Err(error) => {
                     error!("Failed to create session: {:?}", error);
-                    return;
                 }
             };
         }
@@ -161,6 +160,7 @@ pub async fn play_track(
 // Connect mode support
 
 #[derive(Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub struct LMS {
     base_url: Option<String>,
     player_mac: Option<String>,
@@ -173,21 +173,19 @@ impl LMS {
         LMS {
             base_url: Some(format!(
                 "http://{}/jsonrpc.js",
-                base_url.unwrap_or("localhost:9000".to_string())
+                base_url.unwrap_or_else(|| "localhost:9000".to_string())
             )),
-            player_mac: player_mac,
-            auth: auth,
+            player_mac,
+            auth,
         }
     }
 
     pub fn is_configured(&self) -> bool {
-        if self.base_url != None {
-            if self.player_mac != None {
-                return true;
-            }
+        if self.base_url != None && self.player_mac != None {
+            return true;
         }
 
-        return false;
+        false
     }
 
     pub async fn signal_event(&self, event: PlayerEvent) {
@@ -206,8 +204,8 @@ impl LMS {
                 );
                 command = format!(
                     r#"["spottyconnect","change","{}","{}"]"#,
-                    new_track_id.to_base62().unwrap_or_default().to_string(),
-                    old_track_id.to_base62().unwrap_or_default().to_string()
+                    new_track_id.to_base62().unwrap_or_default(),
+                    old_track_id.to_base62().unwrap_or_default()
                 );
             }
             PlayerEvent::Started { track_id, .. } => {
@@ -218,7 +216,7 @@ impl LMS {
                 );
                 command = format!(
                     r#"["spottyconnect","start","{}"]"#,
-                    track_id.to_base62().unwrap_or_default().to_string()
+                    track_id.to_base62().unwrap_or_default()
                 );
             }
             PlayerEvent::Stopped { track_id, .. } => {
@@ -244,7 +242,7 @@ impl LMS {
                 );
                 // we're not implementing the seek event here, as it's going to read player state anyway
                 // but signal a change if the new position has changed and is > 0
-                if position_ms <= 0 {
+                if position_ms == 0 {
                     return;
                 }
                 command = r#"["spottyconnect","change"]"#.to_string();
@@ -277,7 +275,7 @@ impl LMS {
                 #[cfg(debug_assertions)]
                 info!("event: volume: {}", volume);
                 // we're not using the volume here, as LMS will read player state anyway
-                command = format!(r#"["spottyconnect","volume",{}]"#, new_volume.to_string());
+                command = format!(r#"["spottyconnect","volume",{}]"#, new_volume);
             }
             _ => return,
         }
@@ -314,7 +312,7 @@ impl LMS {
                 let req = Request::builder()
                     .method(Method::POST)
                     .uri(base_url.to_string())
-                    .header("user-agent", format!("{}", VERSION))
+                    .header("user-agent", VERSION.to_string())
                     .header("content-type", "application/json")
                     .header("authorization", format!("Basic {}", auth_header))
                     .header("x-scanner", "1")

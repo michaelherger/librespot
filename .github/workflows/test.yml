@@ -229,6 +229,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
+      - name: Write Build Configuration File
+        uses: DamianReeves/write-file-action@v1.0
+        with:
+          path: ./src/client_id.txt
+          contents: ${{ env.KEYMASTER_CLIENT_ID }}
+          write-mode: overwrite
+
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:

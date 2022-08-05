@@ -38,12 +38,12 @@ use librespot::{
 mod spotty;
 use spotty::LMS;
 
-const VERSION: &'static str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
+const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
 #[cfg(target_os = "windows")]
-const NULLDEVICE: &'static str = "NUL";
+const NULLDEVICE: &str = "NUL";
 #[cfg(not(target_os = "windows"))]
-const NULLDEVICE: &'static str = "/dev/null";
+const NULLDEVICE: &str = "/dev/null";
 
 fn device_id(name: &str) -> String {
     hex::encode(Sha1::digest(name.as_bytes()))
@@ -542,8 +542,7 @@ fn get_setup() -> Setup {
         exit(1);
     };
 
-    let mixer = mixer::find(Some(SoftMixer::NAME).as_deref()).expect("Invalid mixer");
-    let mixer_type: Option<String> = None;
+    let mixer = mixer::find(Some(SoftMixer::NAME)).expect("Invalid mixer");
 
     let mixer_config = {
         let mixer_default_config = MixerConfig::default();
@@ -719,9 +718,7 @@ fn get_setup() -> Setup {
 
                 (volume as f32 / 100.0 * VolumeCtrl::MAX_VOLUME as f32) as u16
             })
-            .or_else(|| match mixer_type.as_deref() {
-                _ => cache.as_ref().and_then(Cache::volume),
-            });
+            .or_else(|| cache.as_ref().and_then(Cache::volume));
 
         let device_type = DeviceType::default();
         let has_volume_ctrl = !matches!(mixer_config.volume_ctrl, VolumeCtrl::Fixed);
@@ -775,7 +772,7 @@ fn get_setup() -> Setup {
 
         let normalisation = opt_present(ENABLE_VOLUME_NORMALISATION);
 
-        let normalisation_type;
+        let mut normalisation_type = player_default_config.normalisation_type;
 
         if !normalisation {
             for a in &[NORMALISATION_GAIN_TYPE] {
@@ -787,8 +784,6 @@ fn get_setup() -> Setup {
                     break;
                 }
             }
-
-            normalisation_type = player_default_config.normalisation_type;
         } else {
             normalisation_type = opt_str(NORMALISATION_GAIN_TYPE)
                 .as_deref()
@@ -806,7 +801,7 @@ fn get_setup() -> Setup {
                     })
                 })
                 .unwrap_or(player_default_config.normalisation_type);
-        }
+        };
 
         let ditherer = PlayerConfig::default().ditherer;
         let passthrough = opt_present(PASSTHROUGH) || opt_present(PASS_THROUGH);
@@ -830,12 +825,12 @@ fn get_setup() -> Setup {
 
     let authenticate = opt_present(AUTHENTICATE);
     let start_position = opt_str(START_POSITION)
-        .unwrap_or("0".to_string())
+        .unwrap_or_else(|| "0".to_string())
         .parse::<f32>()
         .unwrap_or(0.0);
 
-    let save_token = opt_str(SAVE_TOKEN).unwrap_or("".to_string());
-    let client_id = opt_str(CLIENT_ID).unwrap_or(format!("{}", include_str!("client_id.txt")));
+    let save_token = opt_str(SAVE_TOKEN).unwrap_or_else(|| "".to_string());
+    let client_id = opt_str(CLIENT_ID).unwrap_or_else(|| include_str!("client_id.txt").to_string());
 
     let lms = LMS::new(
         opt_str(LOGITECH_MEDIA_SERVER),
@@ -859,13 +854,13 @@ fn get_setup() -> Setup {
         authenticate,
         single_track: opt_str(SINGLE_TRACK),
         start_position: (start_position * 1000.0) as u32,
-        get_token: opt_present(GET_TOKEN) || save_token.as_str().len() != 0,
-        save_token: if save_token.as_str().len() == 0 {
+        get_token: opt_present(GET_TOKEN) || save_token.as_str().is_empty(),
+        save_token: if save_token.as_str().is_empty() {
             None
         } else {
             Some(save_token)
         },
-        client_id: if client_id.as_str().len() == 0 {
+        client_id: if client_id.as_str().is_empty() {
             None
         } else {
             Some(client_id)
