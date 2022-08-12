@@ -1688,7 +1688,7 @@ async fn main() {
                         }
                     };
 
-                    let (spirc_, spirc_task_) = Spirc::new(connect_config, session, player, mixer);
+                    let (spirc_, spirc_task_) = Spirc::new(connect_config, session, player, mixer, false);
 
                     spirc = Some(spirc_);
                     spirc_task = Some(Box::pin(spirc_task_));
@@ -1738,6 +1738,15 @@ async fn main() {
             }, if player_event_channel.is_some() => match event {
                 Some(event) => {
                     if let Some(program) = &setup.player_event_program {
+						match event {
+							PlayerEvent::EndOfTrack { .. } => {
+								info!("END OF TRACK EVENT");
+								//spirc.as_mut().unwrap().next();	
+								spirc.as_mut().unwrap().pause();	
+							},	
+							_ => info!("EVENT RECEIVED"),
+						}
+						/*
                         if let Some(child) = run_program_on_events(event, program) {
                             if let Ok(mut child) = child {
                                 tokio::spawn(async move {
@@ -1759,6 +1768,7 @@ async fn main() {
                                 warn!("On event program failed to start");
                             }
                         }
+						*/
                     }
                 },
                 None => {
