@@ -2,7 +2,7 @@ name: Build Spotty for all platforms
 
 on:
   push:
-    branches: [spotty, spotty-dev]
+    branches: [spotty, spotty-dev, update-github-action]
   workflow_dispatch:
 
 env:
@@ -11,7 +11,7 @@ env:
 
 jobs:
   macOS:
-    runs-on: macos-11.0
+    runs-on: macos-11
 
     steps:
     - name: Install Rust
@@ -20,7 +20,7 @@ jobs:
           toolchain: stable
 
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Write Build Configuration File
       uses: DamianReeves/write-file-action@v1.0
@@ -28,6 +28,20 @@ jobs:
         path: ./src/client_id.txt
         contents: ${{ env.KEYMASTER_CLIENT_ID }}
         write-mode: overwrite
+
+    - name: Get Rustc version
+      id: get-rustc-version
+      run: echo "::set-output name=version::$(rustc -V)"
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-${{ steps.get-rustc-version.outputs.version }}-${{ hashFiles('Cargo.lock') }}
 
     - name: Install Rust support for ARM64 & prepare environment
       run: |
@@ -51,45 +65,61 @@ jobs:
           -output releases/spotty
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: spotty-mac
         path: releases/
 
-  Linux:
+  Linux_x86_64:
     runs-on: ubuntu-20.04
-
     steps:
     - name: Checkout
-      uses: actions/checkout@v1
-
-    - name: Write Build Configuration File
-      uses: DamianReeves/write-file-action@v1.0
+      uses: actions/checkout@v3
+    - uses: ./.github/actions/xbuild-spotty
       with:
-        path: ./src/client_id.txt
-        contents: ${{ env.KEYMASTER_CLIENT_ID }}
-        write-mode: overwrite
+        binary-name: spotty-x86_64
+        client-id: ${{ env.KEYMASTER_CLIENT_ID }}
+        target-triple: x86_64-unknown-linux-musl
 
-    - name: Build ARMv7
-      run: docker run --rm -v $(pwd):/source dlecan/rust-crosscompiler-arm:stable
-
-    - name: Build other binaries (x86_64, i686, ARMv8)
-      run: |
-        docker build -t spotty-cross - < docker/Dockerfile
-        docker run --rm -v $PWD/target:/build -v $PWD:/src spotty-cross
-
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v2
+  Linux_ARMv6:
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    - uses: ./.github/actions/xbuild-spotty
       with:
-        name: spotty-linux
-        path: releases/
+        binary-name: spotty-arm
+        client-id: ${{ env.KEYMASTER_CLIENT_ID }}
+        target-triple: arm-unknown-linux-musleabi
 
-  windows:
+  Linux_ARMv7:
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    - uses: ./.github/actions/xbuild-spotty
+      with:
+        binary-name: spotty-hf
+        client-id: ${{ env.KEYMASTER_CLIENT_ID }}
+        target-triple: armv7-unknown-linux-musleabihf
+
+  Linux_ARMv8:
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    - uses: ./.github/actions/xbuild-spotty
+      with:
+        binary-name: spotty-aarch64
+        client-id: ${{ env.KEYMASTER_CLIENT_ID }}
+        target-triple: aarch64-unknown-linux-musl
+
+  Windows:
     runs-on: windows-2019
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Write Build Configuration File
       uses: DamianReeves/write-file-action@v1.0
@@ -102,7 +132,7 @@ jobs:
       run: cargo build --release
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: spotty.exe
         path: target/release/spotty.exe

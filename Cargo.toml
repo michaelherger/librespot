@@ -68,3 +68,4 @@ with-dns-sd = ["librespot-discovery/with-dns-sd"]
 [profile.release]
 lto = true
 panic = 'abort'
+strip = true

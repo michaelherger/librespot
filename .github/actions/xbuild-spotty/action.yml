@@ -1,0 +1,56 @@
+name: 'Cross-Build Spotty'
+description: 'Build Spotty for any Linux platform'
+
+inputs:
+  binary-name:
+    description: 'The name of the resulting artifact'
+    default: 'spotty'
+  client-id:
+    description: 'The Client ID to bake in to the binary'
+    required: true
+  target-triple:
+    description: 'The Rust Target Triple'
+    required: true
+
+runs:
+  using: "composite"
+
+  steps:
+    - name: Write Build Configuration File
+      uses: DamianReeves/write-file-action@v1.0
+      with:
+        path: ./src/client_id.txt
+        contents: ${{ inputs.client-id }}
+        write-mode: overwrite
+
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: ${{ inputs.target-triple }}
+        override: true
+
+    - name: Get Rustc version
+      id: get-rustc-version
+      run: echo "::set-output name=version::$(rustc -V)"
+      shell: bash
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git
+          target
+        key: ${{ steps.get-rustc-version.outputs.version }}-${{ inputs.target-triple }}-${{ hashFiles('Cargo.lock') }}
+
+    - uses: actions-rs/cargo@v1
+      with:
+        use-cross: true
+        command: build
+        args: --release --target ${{ inputs.target-triple }}
+
+    - uses: actions/upload-artifact@v3
+      with:
+        name: ${{ inputs.binary-name }}
+        path: target/${{ inputs.target-triple }}/release/spotty
