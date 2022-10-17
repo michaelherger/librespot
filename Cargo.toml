@@ -71,3 +71,4 @@ default = ["passthrough-decoder"]
 [profile.release]
 lto = true
 panic = 'abort'
+strip = true
