@@ -13,7 +13,7 @@ env:
   KEYMASTER_CLIENT_ID: ${{ secrets.KEYMASTER_CLIENT_ID }}
 
 jobs:
-  CustomLinuxBuild:
+  Custom-Build:
     runs-on: ubuntu-latest
 
     steps:
@@ -42,6 +42,5 @@ jobs:
         name: spotty-custom
         path: target/${{ github.event.inputs.target_triple }}/release/spotty
 
-    - name: Compare results
-      run: |
-        echo '### Build succeeded for `${{ github.event.inputs.target_triple }}' >> $GITHUB_STEP_SUMMARY
+    - run: |
+        echo 'Build succeeded for `${{ github.event.inputs.target_triple }}`' >> $GITHUB_STEP_SUMMARY
