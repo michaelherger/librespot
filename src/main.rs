@@ -559,7 +559,7 @@ fn get_setup() -> Setup {
 
         let cred_dir = volume_dir.clone();
 
-        let audio_dir = if opt_present(DISABLE_AUDIO_CACHE) {
+        let audio_dir = if !opt_present(ENABLE_AUDIO_CACHE) {
             None
         } else {
             opt_str(CACHE)
@@ -929,6 +929,7 @@ async fn main() {
             last_credentials,
             setup.player_config,
             setup.session_config,
+            setup.cache,
         )
         .await;
         exit(0);

@@ -11,6 +11,7 @@ use librespot::core::config::SessionConfig;
 use librespot::core::keymaster;
 use librespot::core::session::Session;
 use librespot::core::spotify_id::SpotifyId;
+use librespot::core::cache::Cache;
 
 use librespot::playback::audio_backend;
 use librespot::playback::config::{AudioFormat, PlayerConfig};
@@ -116,6 +117,7 @@ pub async fn play_track(
     last_credentials: Option<Credentials>,
     player_config: PlayerConfig,
     session_config: SessionConfig,
+    cache: Option<Cache>
 ) {
     match last_credentials {
         Some(last_credentials) => {
@@ -130,7 +132,7 @@ pub async fn play_track(
             );
 
             match track {
-                Ok(track) => match Session::connect(session_config, last_credentials, None, true)
+                Ok(track) => match Session::connect(session_config, last_credentials, cache, true)
                     .await
                 {
                     Ok((session, _)) => {
