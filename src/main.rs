@@ -657,6 +657,13 @@ fn get_setup() -> Setup {
             None
         };
 
+        if audio_dir.is_none() && opt_present(CACHE_SIZE_LIMIT) {
+            warn!(
+                "Without a `--{}` / `-{}` path, and/or if the `--{}` flag is not set, `--{}` / `-{}` has no effect.",
+                CACHE, CACHE_SHORT, ENABLE_AUDIO_CACHE, CACHE_SIZE_LIMIT, CACHE_SIZE_LIMIT_SHORT
+            );
+        }
+
         match Cache::new(cred_dir, volume_dir, audio_dir, limit) {
             Ok(cache) => Some(cache),
             Err(e) => {
