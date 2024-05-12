@@ -6,6 +6,7 @@ use librespot_playback::player::PlayerEvent;
 use log::{error, info, trace, warn};
 use sha1::{Digest, Sha1};
 use tokio::sync::mpsc::UnboundedReceiver;
+use thiserror::Error;
 use url::Url;
 
 use librespot::connect::spirc::Spirc;
@@ -87,6 +88,66 @@ fn setup_logging(quiet: bool, verbose: bool) {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum ParseFileSizeError {
+    #[error("empty argument")]
+    EmptyInput,
+    #[error("invalid suffix")]
+    InvalidSuffix,
+    #[error("invalid number: {0}")]
+    InvalidNumber(#[from] std::num::ParseFloatError),
+    #[error("non-finite number specified")]
+    NotFinite(f64),
+}
+
+pub fn parse_file_size(input: &str) -> Result<u64, ParseFileSizeError> {
+    use ParseFileSizeError::*;
+
+    let mut iter = input.chars();
+    let mut suffix = iter.next_back().ok_or(EmptyInput)?;
+    let mut suffix_len = 0;
+
+    let iec = matches!(suffix, 'i' | 'I');
+
+    if iec {
+        suffix_len += 1;
+        suffix = iter.next_back().ok_or(InvalidSuffix)?;
+    }
+
+    let base: u64 = if iec { 1024 } else { 1000 };
+
+    suffix_len += 1;
+    let exponent = match suffix.to_ascii_uppercase() {
+        '0'..='9' if !iec => {
+            suffix_len -= 1;
+            0
+        }
+        'K' => 1,
+        'M' => 2,
+        'G' => 3,
+        'T' => 4,
+        'P' => 5,
+        'E' => 6,
+        'Z' => 7,
+        'Y' => 8,
+        _ => return Err(InvalidSuffix),
+    };
+
+    let num = {
+        let mut iter = input.chars();
+
+        for _ in (&mut iter).rev().take(suffix_len) {}
+
+        iter.as_str().parse::<f64>()?
+    };
+
+    if !num.is_finite() {
+        return Err(NotFinite(num));
+    }
+
+    Ok((num * base.pow(exponent) as f64) as u64)
+}
+
 fn get_version_string() -> String {
     #[cfg(debug_assertions)]
     const BUILD_PROFILE: &str = "debug";
@@ -135,6 +196,7 @@ fn get_setup() -> Setup {
     const AUTOPLAY: &str = "autoplay";
     const BITRATE: &str = "bitrate";
     const CACHE: &str = "cache";
+    const CACHE_SIZE_LIMIT: &str = "cache-size-limit";
     const CHECK: &str = "check";
     const CLIENT_ID: &str = "client-id";
     const DISABLE_AUDIO_CACHE: &str = "disable-audio-cache";
@@ -170,6 +232,7 @@ fn get_setup() -> Setup {
     const AP_PORT_SHORT: &str = "";
     const BITRATE_SHORT: &str = "b";
     const CACHE_SHORT: &str = "c";
+    const CACHE_SIZE_LIMIT_SHORT: &str = "M";
     const DISABLE_AUDIO_CACHE_SHORT: &str = "G";
     const ENABLE_AUDIO_CACHE_SHORT: &str = "";
     const DISABLE_GAPLESS_SHORT: &str = "g";
@@ -269,6 +332,12 @@ fn get_setup() -> Setup {
         CACHE,
         "Path to a directory where files will be cached.",
         "PATH",
+    )
+    .optopt(
+        CACHE_SIZE_LIMIT_SHORT,
+        CACHE_SIZE_LIMIT,
+        "Limits the size of the cache for audio files. It's possible to use suffixes like K, M or G, e.g. 16G for example.",
+        "SIZE"
     )
     .optopt(
         USERNAME_SHORT,
@@ -559,7 +628,7 @@ fn get_setup() -> Setup {
 
         let cred_dir = volume_dir.clone();
 
-        let audio_dir = if opt_present(DISABLE_AUDIO_CACHE) {
+        let audio_dir = if !opt_present(ENABLE_AUDIO_CACHE) {
             None
         } else {
             opt_str(CACHE)
@@ -567,7 +636,33 @@ fn get_setup() -> Setup {
                 .map(|p| AsRef::<Path>::as_ref(p).join("files"))
         };
 
-        let limit = None;
+        let limit = if audio_dir.is_some() {
+            opt_str(CACHE_SIZE_LIMIT)
+                .as_deref()
+                .map(parse_file_size)
+                .map(|e| {
+                    e.unwrap_or_else(|e| {
+                        invalid_error_msg(
+                            CACHE_SIZE_LIMIT,
+                            CACHE_SIZE_LIMIT_SHORT,
+                            &e.to_string(),
+                            "",
+                            "",
+                        );
+
+                        exit(1);
+                    })
+                })
+        } else {
+            None
+        };
+
+        if audio_dir.is_none() && opt_present(CACHE_SIZE_LIMIT) {
+            warn!(
+                "Without a `--{}` / `-{}` path, and/or if the `--{}` flag is not set, `--{}` / `-{}` has no effect.",
+                CACHE, CACHE_SHORT, ENABLE_AUDIO_CACHE, CACHE_SIZE_LIMIT, CACHE_SIZE_LIMIT_SHORT
+            );
+        }
 
         match Cache::new(cred_dir, volume_dir, audio_dir, limit) {
             Ok(cache) => Some(cache),
@@ -929,6 +1024,7 @@ async fn main() {
             last_credentials,
             setup.player_config,
             setup.session_config,
+            setup.cache,
         )
         .await;
         exit(0);
