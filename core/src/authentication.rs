@@ -1,10 +1,11 @@
 use std::io::{self, Read};
 
 use aes::Aes192;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::Engine as _;
 use byteorder::{BigEndian, ByteOrder};
-use hmac::Hmac;
-use pbkdf2::pbkdf2;
-use protobuf::ProtobufEnum;
+use pbkdf2::pbkdf2_hmac;
+use protobuf::Enum;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use thiserror::Error;
@@ -26,7 +27,7 @@ impl From<AuthenticationError> for Error {
 }
 
 /// The credentials are used to log into the Spotify API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Credentials {
     pub username: String,
 
@@ -96,7 +97,7 @@ impl Credentials {
                 return Err(AuthenticationError::Key.into());
             }
 
-            pbkdf2::<Hmac<Sha1>>(&secret, username.as_bytes(), 0x100, &mut key[0..20]);
+            pbkdf2_hmac::<Sha1>(&secret, username.as_bytes(), 0x100, &mut key[0..20]);
 
             let hash = &Sha1::digest(&key[..20]);
             key[..20].copy_from_slice(hash);
@@ -109,7 +110,7 @@ impl Credentials {
             use aes::cipher::generic_array::GenericArray;
             use aes::cipher::{BlockDecrypt, BlockSizeUser, KeyInit};
 
-            let mut data = base64::decode(encrypted_blob)?;
+            let mut data = BASE64.decode(encrypted_blob)?;
             let cipher = Aes192::new(GenericArray::from_slice(&key));
             let block_size = Aes192::block_size();
 
@@ -145,7 +146,7 @@ impl Credentials {
 
 fn serialize_protobuf_enum<T, S>(v: &T, ser: S) -> Result<S::Ok, S::Error>
 where
-    T: ProtobufEnum,
+    T: Enum,
     S: serde::Serializer,
 {
     serde::Serialize::serialize(&v.value(), ser)
@@ -153,7 +154,7 @@ where
 
 fn deserialize_protobuf_enum<'de, T, D>(de: D) -> Result<T, D::Error>
 where
-    T: ProtobufEnum,
+    T: Enum,
     D: serde::Deserializer<'de>,
 {
     let v: i32 = serde::Deserialize::deserialize(de)?;
@@ -165,7 +166,7 @@ where
     T: AsRef<[u8]>,
     S: serde::Serializer,
 {
-    serde::Serialize::serialize(&base64::encode(v.as_ref()), ser)
+    serde::Serialize::serialize(&BASE64.encode(v.as_ref()), ser)
 }
 
 fn deserialize_base64<'de, D>(de: D) -> Result<Vec<u8>, D::Error>
@@ -173,5 +174,7 @@ where
     D: serde::Deserializer<'de>,
 {
     let v: String = serde::Deserialize::deserialize(de)?;
-    base64::decode(&v).map_err(|e| serde::de::Error::custom(e.to_string()))
+    BASE64
+        .decode(v)
+        .map_err(|e| serde::de::Error::custom(e.to_string()))
 }

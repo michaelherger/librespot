@@ -18,6 +18,7 @@ pub mod episode;
 pub mod error;
 pub mod external_id;
 pub mod image;
+pub mod lyrics;
 pub mod playlist;
 mod request;
 pub mod restriction;
@@ -33,13 +34,14 @@ use request::RequestResult;
 pub use album::Album;
 pub use artist::Artist;
 pub use episode::Episode;
+pub use lyrics::Lyrics;
 pub use playlist::Playlist;
 pub use show::Show;
 pub use track::Track;
 
 #[async_trait]
 pub trait Metadata: Send + Sized + 'static {
-    type Message: protobuf::Message;
+    type Message: protobuf::Message + std::fmt::Debug;
 
     // Request a protobuf
     async fn request(session: &Session, id: &SpotifyId) -> RequestResult;

@@ -1,6 +1,7 @@
-#[macro_use]
-extern crate serde_json;
-
+use data_encoding::HEXLOWER;
+use futures_util::StreamExt;
+use log::{debug, error, info, trace, warn};
+use sha1::{Digest, Sha1};
 use std::{
     env,
     fs::create_dir_all,
@@ -15,6 +16,8 @@ use std::{
 use futures_util::StreamExt;
 use log::{error, info, trace, warn};
 use sha1::{Digest, Sha1};
+use sysinfo::System;
+use thiserror::Error;
 use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
 
@@ -31,7 +34,7 @@ use librespot::{
             AudioFormat, Bitrate, NormalisationMethod, NormalisationType, PlayerConfig, VolumeCtrl,
         },
         mixer::{self, MixerConfig, MixerFn},
-        player::{Player, PlayerEvent},
+        player::{coefficient_to_duration, duration_to_coefficient, Player, PlayerEvent},
     },
 };
 
@@ -45,18 +48,18 @@ const NULLDEVICE: &str = "NUL";
 #[cfg(not(target_os = "windows"))]
 const NULLDEVICE: &str = "/dev/null";
 
+mod player_event_handler;
+use player_event_handler::{run_program_on_sink_events, EventHandler};
+
 fn device_id(name: &str) -> String {
-    hex::encode(Sha1::digest(name.as_bytes()))
+    HEXLOWER.encode(&Sha1::digest(name.as_bytes()))
 }
 
 fn usage(program: &str, opts: &getopts::Options) -> String {
     let repo_home = env!("CARGO_PKG_REPOSITORY");
     let desc = env!("CARGO_PKG_DESCRIPTION");
     let version = get_version_string();
-    let brief = format!(
-        "{}\n\n{}\n\n{}\n\nUsage: {} [<Options>]",
-        version, desc, repo_home, program
-    );
+    let brief = format!("{version}\n\n{desc}\n\n{repo_home}\n\nUsage: {program} [<Options>]");
     opts.usage(&brief)
 }
 
@@ -120,6 +123,7 @@ struct Setup {
     credentials: Option<Credentials>,
     enable_discovery: bool,
     zeroconf_port: u16,
+    zeroconf_ip: Vec<std::net::IpAddr>,
 
     // spotty
     authenticate: bool,
@@ -134,12 +138,13 @@ struct Setup {
 
 fn get_setup() -> Setup {
     const VALID_INITIAL_VOLUME_RANGE: RangeInclusive<u16> = 0..=100;
+
+    const AP_PORT: &str = "ap-port";
     const AUTHENTICATE: &str = "authenticate";
     const AUTOPLAY: &str = "autoplay";
     const BITRATE: &str = "bitrate";
     const CACHE: &str = "cache";
-    const CHECK: &str = "check";
-    const CLIENT_ID: &str = "client-id";
+    // const CACHE_SIZE_LIMIT: &str = "cache-size-limit";
     const DISABLE_AUDIO_CACHE: &str = "disable-audio-cache";
     const DISABLE_DISCOVERY: &str = "disable-discovery";
     const DISABLE_GAPLESS: &str = "disable-gapless";
@@ -167,10 +172,12 @@ fn get_setup() -> Setup {
     const VERBOSE: &str = "verbose";
     const VERSION: &str = "version";
     const ZEROCONF_PORT: &str = "zeroconf-port";
+    const ZEROCONF_INTERFACE: &str = "zeroconf-interface";
 
     // Mostly arbitrary.
     const AUTHENTICATE_SHORT: &str = "a";
     const AUTOPLAY_SHORT: &str = "A";
+    const AP_PORT_SHORT: &str = "a";
     const BITRATE_SHORT: &str = "b";
     const CACHE_SHORT: &str = "c";
     const DISABLE_AUDIO_CACHE_SHORT: &str = "G";
@@ -178,6 +185,9 @@ fn get_setup() -> Setup {
     const DISABLE_GAPLESS_SHORT: &str = "g";
     const HELP_SHORT: &str = "h";
     const CLIENT_ID_SHORT: &str = "i";
+    // const ZEROCONF_INTERFACE_SHORT: &str = "i";
+    // const CACHE_SIZE_LIMIT_SHORT: &str = "M";
+    // const MIXER_TYPE_SHORT: &str = "m";
     const ENABLE_VOLUME_NORMALISATION_SHORT: &str = "N";
     const NAME_SHORT: &str = "n";
     const DISABLE_DISCOVERY_SHORT: &str = "O";
@@ -340,7 +350,7 @@ fn get_setup() -> Setup {
     )
     .optopt(
         CLIENT_ID_SHORT,
-        CLIENT_ID,
+        "",
         "A Spotify client_id to be used to get the oauth token. Required with the --get-token request.",
         "CLIENT_ID"
     )
@@ -383,6 +393,24 @@ fn get_setup() -> Setup {
         PLAYER_MAC,
         "MAC address of the Squeezebox to be controlled",
         "MAC"
+    )
+    .optopt(
+        AP_PORT_SHORT,
+        AP_PORT,
+        "Connect to an AP with a specified port 1 - 65535. Available ports are usually 80, 443 and 4070.",
+        "PORT",
+    )
+    .optopt(
+        AUTOPLAY_SHORT,
+        AUTOPLAY,
+        "Explicitly set autoplay {on|off}. Defaults to following the client setting.",
+        "OVERRIDE",
+    )
+    .optopt(
+        ZEROCONF_INTERFACE_SHORT,
+        ZEROCONF_INTERFACE,
+        "Comma-separated interface IP addresses on which zeroconf will bind. Defaults to all interfaces. Ignored by DNS-SD.",
+        "IP"
     );
 
     #[cfg(feature = "passthrough-decoder")]
@@ -397,8 +425,7 @@ fn get_setup() -> Setup {
             Ok(valid) => Some(valid),
             Err(s) => {
                 eprintln!(
-                    "Command line argument was not valid Unicode and will not be evaluated: {:?}",
-                    s
+                    "Command line argument was not valid Unicode and will not be evaluated: {s:?}"
                 );
                 None
             }
@@ -408,7 +435,7 @@ fn get_setup() -> Setup {
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("Error parsing command line options: {}", e);
+            eprintln!("Error parsing command line options: {e}");
             println!("\n{}", usage(&args[0], &opts));
             exit(1);
         }
@@ -428,7 +455,7 @@ fn get_setup() -> Setup {
                 match v.into_string() {
                     Ok(value) => Some((key, value)),
                     Err(s) => {
-                        eprintln!("Environment variable was not valid Unicode and will not be evaluated: {}={:?}", key, s);
+                        eprintln!("Environment variable was not valid Unicode and will not be evaluated: {key}={s:?}");
                         None
                     }
                 }
@@ -478,11 +505,11 @@ fn get_setup() -> Setup {
 
         for (k, v) in &env_vars {
             if matches!(k.as_str(), "LIBRESPOT_PASSWORD" | "LIBRESPOT_USERNAME") {
-                trace!("\t\t{}=\"XXXXXXXX\"", k);
+                trace!("\t\t{k}=\"XXXXXXXX\"");
             } else if v.is_empty() {
-                trace!("\t\t{}=", k);
+                trace!("\t\t{k}=");
             } else {
-                trace!("\t\t{}=\"{}\"", k, v);
+                trace!("\t\t{k}=\"{v}\"");
             }
         }
     }
@@ -511,13 +538,13 @@ fn get_setup() -> Setup {
             {
                 if matches!(opt, PASSWORD | PASSWORD_SHORT | USERNAME | USERNAME_SHORT) {
                     // Don't log creds.
-                    trace!("\t\t{} \"XXXXXXXX\"", opt);
+                    trace!("\t\t{opt} \"XXXXXXXX\"");
                 } else {
-                    let value = matches.opt_str(opt).unwrap_or_else(|| "".to_string());
+                    let value = matches.opt_str(opt).unwrap_or_default();
                     if value.is_empty() {
-                        trace!("\t\t{}", opt);
+                        trace!("\t\t{opt}");
                     } else {
-                        trace!("\t\t{} \"{}\"", opt, value);
+                        trace!("\t\t{opt} \"{value}\"");
                     }
                 }
             }
@@ -526,19 +553,19 @@ fn get_setup() -> Setup {
 
     let invalid_error_msg =
         |long: &str, short: &str, invalid: &str, valid_values: &str, default_value: &str| {
-            error!("Invalid `--{}` / `-{}`: \"{}\"", long, short, invalid);
+            error!("Invalid `--{long}` / `-{short}`: \"{invalid}\"");
 
             if !valid_values.is_empty() {
-                println!("Valid `--{}` / `-{}` values: {}", long, short, valid_values);
+                println!("Valid `--{long}` / `-{short}` values: {valid_values}");
             }
 
             if !default_value.is_empty() {
-                println!("Default: {}", default_value);
+                println!("Default: {default_value}");
             }
         };
 
     let empty_string_error_msg = |long: &str, short: &str| {
-        error!("`--{}` / `-{}` can not be an empty string", long, short);
+        error!("`--{long}` / `-{short}` can not be an empty string");
         exit(1);
     };
 
@@ -612,7 +639,7 @@ fn get_setup() -> Setup {
                 match cached_creds {
                     Some(creds) if username == creds.username => Some(creds),
                     _ => {
-                        let prompt = &format!("Password for {}: ", username);
+                        let prompt = &format!("Password for {username}: ");
                         match rpassword::prompt_password(prompt) {
                             Ok(password) => {
                                 if !password.is_empty() {
@@ -678,6 +705,51 @@ fn get_setup() -> Setup {
         0
     };
 
+    // #1046: not all connections are supplied an `autoplay` user attribute to run statelessly.
+    // This knob allows for a manual override.
+    let autoplay = match opt_str(AUTOPLAY) {
+        Some(value) => match value.as_ref() {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => {
+                invalid_error_msg(
+                    AUTOPLAY,
+                    AUTOPLAY_SHORT,
+                    &opt_str(AUTOPLAY).unwrap_or_default(),
+                    "on, off",
+                    "",
+                );
+                exit(1);
+            }
+        },
+        None => SessionConfig::default().autoplay,
+    };
+
+    let zeroconf_ip: Vec<std::net::IpAddr> = if opt_present(ZEROCONF_INTERFACE) {
+        if let Some(zeroconf_ip) = opt_str(ZEROCONF_INTERFACE) {
+            zeroconf_ip
+                .split(',')
+                .map(|s| {
+                    s.trim().parse::<std::net::IpAddr>().unwrap_or_else(|_| {
+                        invalid_error_msg(
+                            ZEROCONF_INTERFACE,
+                            ZEROCONF_INTERFACE_SHORT,
+                            s,
+                            "IPv4 and IPv6 addresses",
+                            "",
+                        );
+                        exit(1);
+                    })
+                })
+                .collect()
+        } else {
+            warn!("Unable to use zeroconf-interface option, default to all interfaces.");
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
     let connect_config = {
         let connect_default_config = ConnectConfig::default();
 
@@ -726,6 +798,7 @@ fn get_setup() -> Setup {
         ConnectConfig {
             name,
             device_type,
+            is_group,
             initial_volume,
             has_volume_ctrl,
         }
@@ -752,7 +825,8 @@ fn get_setup() -> Setup {
             },
         ),
 		tmp_dir,
-        ..SessionConfig::default()
+		autoplay,
+		..SessionConfig::default()
     };
 
     let player_config = {
@@ -867,6 +941,7 @@ fn get_setup() -> Setup {
         },
         scopes: opt_str(SCOPE),
         lms,
+        zeroconf_ip,
     }
 }
 
@@ -874,6 +949,7 @@ fn get_setup() -> Setup {
 async fn main() {
     const RUST_BACKTRACE: &str = "RUST_BACKTRACE";
     const RECONNECT_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(600);
+    const DISCOVERY_RETRY_TIMEOUT: Duration = Duration::from_secs(10);
     const RECONNECT_RATE_LIMIT: usize = 5;
 
     if env::var(RUST_BACKTRACE).is_err() {
@@ -885,23 +961,51 @@ async fn main() {
     let mut last_credentials = None;
     let mut spirc: Option<Spirc> = None;
     let mut spirc_task: Option<Pin<_>> = None;
-    let mut player_event_channel: Option<UnboundedReceiver<PlayerEvent>> = None;
     let mut auto_connect_times: Vec<Instant> = vec![];
     let mut discovery = None;
     let mut connecting = false;
+    let mut _event_handler: Option<EventHandler> = None;
 
-    let session = Session::new(setup.session_config.clone(), setup.cache.clone());
+    let mut session = Session::new(setup.session_config.clone(), setup.cache.clone());
+
+    let mut sys = System::new();
 
     if setup.enable_discovery {
-        let device_id = setup.session_config.device_id.clone();
-        match librespot::discovery::Discovery::builder(device_id)
-            .name(setup.connect_config.name.clone())
-            .device_type(setup.connect_config.device_type)
-            .port(setup.zeroconf_port)
-            .launch()
-        {
-            Ok(d) => discovery = Some(d),
-            Err(err) => warn!("Could not initialise discovery: {}.", err),
+        // When started at boot as a service discovery may fail due to it
+        // trying to bind to interfaces before the network is actually up.
+        // This could be prevented in systemd by starting the service after
+        // network-online.target but it requires that a wait-online.service is
+        // also enabled which is not always the case since a wait-online.service
+        // can potentially hang the boot process until it times out in certain situations.
+        // This allows for discovery to retry every 10 secs in the 1st min of uptime
+        // before giving up thus papering over the issue and not holding up the boot process.
+
+        discovery = loop {
+            let device_id = setup.session_config.device_id.clone();
+            let client_id = setup.session_config.client_id.clone();
+
+            match librespot::discovery::Discovery::builder(device_id, client_id)
+                .name(setup.connect_config.name.clone())
+                .device_type(setup.connect_config.device_type)
+                .is_group(setup.connect_config.is_group)
+                .port(setup.zeroconf_port)
+                .zeroconf_ip(setup.zeroconf_ip.clone())
+                .launch()
+            {
+                Ok(d) => break Some(d),
+                Err(e) => {
+                    sys.refresh_processes();
+
+                    if System::uptime() <= 1 {
+                        debug!("Retrying to initialise discovery: {e}");
+                        tokio::time::sleep(DISCOVERY_RETRY_TIMEOUT).await;
+                    } else {
+                        debug!("System uptime > 1 min, not retrying to initialise discovery");
+                        warn!("Could not initialise discovery: {e}");
+                        break None;
+                    }
+                }
+            }
         };
     }
 
@@ -959,6 +1063,9 @@ async fn main() {
                             // Continue shutdown in its own task
                             tokio::spawn(spirc_task);
                         }
+                        if !session.is_invalid() {
+                            session.shutdown();
+                        }
 
                         connecting = true;
                     },
@@ -974,9 +1081,11 @@ async fn main() {
                 break;
             },
             _ = async {}, if connecting && last_credentials.is_some() => {
-                let mixer_config = setup.mixer_config.clone();
-                let mixer = (setup.mixer)(mixer_config);
-                let player_config = setup.player_config.clone();
+                if session.is_invalid() {
+                    session = Session::new(setup.session_config.clone(), setup.cache.clone());
+                    player.set_session(session.clone());
+                }
+
                 let connect_config = setup.connect_config.clone();
 
                 let soft_volume = mixer.get_soft_volume();
@@ -989,6 +1098,11 @@ async fn main() {
                     });
 
                 let (spirc_, spirc_task_) = match Spirc::new(connect_config, session.clone(), last_credentials.clone().unwrap(), player, mixer).await {
+                // let (spirc_, spirc_task_) = match Spirc::new(connect_config,
+                //                                                 session.clone(),
+                //                                                 last_credentials.clone().unwrap_or_default(),
+                //                                                 player.clone(),
+                //                                                 mixer.clone()).await {
                     Ok((spirc_, spirc_task_)) => (spirc_, spirc_task_),
                     Err(e) => {
                         error!("could not initialize spirc: {}", e);
@@ -997,7 +1111,6 @@ async fn main() {
                 };
                 spirc = Some(spirc_);
                 spirc_task = Some(Box::pin(spirc_task_));
-                player_event_channel = Some(event_channel);
 
                 connecting = false;
             },
@@ -1015,15 +1128,15 @@ async fn main() {
                     auto_connect_times.len() > RECONNECT_RATE_LIMIT
                 };
 
-                match last_credentials.clone() {
-                    Some(_) if !reconnect_exceeds_rate_limit() => {
-                        auto_connect_times.push(Instant::now());
-                        connecting = true;
-                    },
-                    _ => {
-                        error!("Spirc shut down too often. Not reconnecting automatically.");
-                        exit(1);
-                    },
+                if last_credentials.is_some() && !reconnect_exceeds_rate_limit() {
+                    auto_connect_times.push(Instant::now());
+                    if !session.is_invalid() {
+                        session.shutdown();
+                    }
+                    connecting = true;
+                } else {
+                    error!("Spirc shut down too often. Not reconnecting automatically.");
+                    exit(1);
                 }
             },
             event = async {
@@ -1038,11 +1151,15 @@ async fn main() {
                 None => {
                     player_event_channel = None;
                 }
-            },
-            _ = tokio::signal::ctrl_c() => {
-                break;
-            },
-            else => break,
+                _ = async {}, if player.is_invalid() => {
+                    error!("Player shut down unexpectedly");
+                    exit(1);
+                },
+                _ = tokio::signal::ctrl_c() => {
+                    break;
+                },
+                else => break,
+            }
         }
     }
 

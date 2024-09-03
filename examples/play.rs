@@ -2,7 +2,10 @@ use std::{env, process::exit};
 
 use librespot::{
     core::{
-        authentication::Credentials, config::SessionConfig, session::Session, spotify_id::SpotifyId,
+        authentication::Credentials,
+        config::SessionConfig,
+        session::Session,
+        spotify_id::{SpotifyId, SpotifyItemType},
     },
     playback::{
         audio_backend,
@@ -25,7 +28,8 @@ async fn main() {
     }
     let credentials = Credentials::with_password(&args[1], &args[2]);
 
-    let track = SpotifyId::from_base62(&args[3]).unwrap();
+    let mut track = SpotifyId::from_base62(&args[3]).unwrap();
+    track.item_type = SpotifyItemType::Track;
 
     let backend = audio_backend::find(None).unwrap();
 
@@ -36,7 +40,7 @@ async fn main() {
         exit(1);
     }
 
-    let (mut player, _) = Player::new(player_config, session, Box::new(NoOpVolume), move || {
+    let player = Player::new(player_config, session, Box::new(NoOpVolume), move || {
         backend(None, audio_format)
     });
 

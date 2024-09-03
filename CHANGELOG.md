@@ -32,14 +32,20 @@ https://github.com/librespot-org/librespot
 ### Changed
 
 - [all] Assertions were changed into `Result` or removed (breaking)
-- [all] Purge use of `unwrap`, `expect` and return `Result`
+- [all] Purge use of `unwrap`, `expect` and return `Result` (breaking)
 - [all] `chrono` replaced with `time` (breaking)
 - [all] `time` updated (CVE-2020-26235)
 - [all] Improve lock contention and performance (breaking)
+- [all] Use a single `player` instance. Eliminates occasional `player` and
+  `audio backend` restarts, which can cause issues with some playback
+  configurations.
 - [audio] Files are now downloaded over the HTTPS CDN (breaking)
-- [audio] Improve file opening and seeking performance
-- [chore] MSRV is now 1.61
+- [audio] Improve file opening and seeking performance (breaking)
+- [core] MSRV is now 1.73 (breaking)
 - [connect] `DeviceType` moved out of `connect` into `core` (breaking)
+- [connect] Update and expose all `spirc` context fields (breaking)
+- [connect] Add `Clone, Defaut` traits to `spirc` contexts
+- [connect] Autoplay contexts are now retrieved with the `spclient` (breaking)
 - [core] Message listeners are registered before authenticating. As a result
   there now is a separate `Session::new` and subsequent `session.connect`.
   (breaking)
@@ -49,6 +55,11 @@ https://github.com/librespot-org/librespot
 - [core] Cache resolved access points during runtime (breaking)
 - [core] `FileId` is moved out of `SpotifyId`. For now it will be re-exported.
 - [core] Report actual platform data on login
+- [main] `autoplay {on|off}` now acts as an override. If unspecified, `librespot`
+  now follows the setting in the Connect client that controls it. (breaking)
+- [metadata] Most metadata is now retrieved with the `spclient` (breaking)
+- [metadata] Playlists are moved to the `playlist4_external` protobuf (breaking)
+- [metadata] Handle playlists that are sent with microsecond-based timestamps
 - [playback] The audio decoder has been switched from `lewton` to `Symphonia`.
   This improves the Vorbis sound quality, adds support for MP3 as well as for
   FLAC in the future. (breaking)
@@ -56,13 +67,15 @@ https://github.com/librespot-org/librespot
 - [playback] The passthrough decoder is now feature-gated (breaking)
 - [playback] `rodio`: call play and pause
 - [protocol] protobufs have been updated
-- [metadata] Most metadata is now retrieved with the `spclient` (breaking)
-- [metadata] Playlists are moved to the `playlist4_external` protobuf (breaking)
 
 ### Added
 
 - [all] Check that array indexes are within bounds (panic safety)
 - [all] Wrap errors in librespot `Error` type (breaking)
+- [connect] Add option on which zeroconf will bind. Defaults to all interfaces. Ignored by DNS-SD.
+- [connect] Add session events
+- [connect] Add `repeat`, `set_position_ms` and `set_volume` to `spirc.rs`
+- [contrib] Add `event_handler_example.py`
 - [core] Send metrics with metadata queries: client ID, country & product
 - [core] Verify Spotify server certificates (prevents man-in-the-middle attacks)
 - [core] User attributes are stored in `Session` upon login, accessible with a
@@ -75,19 +88,37 @@ https://github.com/librespot-org/librespot
   It supports a lot of functionality, including audio previews and image
   downloads even if librespot doesn't use that for playback itself.
 - [core] Support downloading of lyrics
+- [core] Support parsing `SpotifyId` for local files
+- [core] Support parsing `SpotifyId` for named playlists
+- [core] Add checks and handling for stale server connections.
+- [main] Add all player events to `player_event_handler.rs`
+- [main] Add an event worker thread that runs async to the main thread(s) but
+  sync to itself to prevent potential data races for event consumers
+- [metadata] All metadata fields in the protobufs are now exposed (breaking)
 - [playback] Explicit tracks are skipped if the controlling Connect client has
   disabled such content. Applications that use librespot as a library without
   Connect should use the 'filter-explicit-content' user attribute in the session.
-- [metadata] All metadata fields in the protobufs are now exposed (breaking)
+- [playback] Add metadata support via a `TrackChanged` event
+- [connect] Add `activate` and `load` functions to `Spirc`, allowing control over local connect sessions
+- [metadata] Add `Lyrics`
+- [discovery] Add discovery initialisation retries if within the 1st min of uptime
 
 ### Fixed
 
-### Removed
-
-- [main] `autoplay` is no longer a command-line option. Instead, librespot now
-  follows the setting in the Connect client that controls it. Applications that
-  use librespot as a library without Connect should now instead use the
-  'autoplay' user attribute in the session.
+- [connect] Set `PlayStatus` to the correct value when Player is loading to
+  avoid blanking out the controls when `self.play_status` is `LoadingPlay` or
+  `LoadingPause` in `spirc.rs`
+- [connect] Handle attempts to play local files better by basically ignoring
+  attempts to load them in `handle_remote_update` in `spirc.rs`
+- [connect] Loading previous or next tracks, or looping back on repeat, will
+  only start playback when we were already playing
+- [connect, playback] Clean up and de-noise events and event firing
+- [playback] Handle invalid track start positions by just starting the track
+  from the beginning
+- [playback] Handle disappearing and invalid devices better
+- [playback] Handle seek, pause, and play commands while loading
+- [playback] Handle disabled normalisation correctly when using fixed volume
+- [metadata] Fix missing colon when converting named spotify IDs to URIs
 
 ## [0.4.2] - 2022-07-29
 

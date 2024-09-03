@@ -2,20 +2,23 @@ use std::{
     borrow::Cow,
     collections::BTreeMap,
     convert::Infallible,
-    net::{Ipv4Addr, SocketAddr},
+    net::{Ipv4Addr, SocketAddr, TcpListener},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
 use aes::cipher::{KeyIvInit, StreamCipher};
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::Engine as _;
+use bytes::Bytes;
 use futures_core::Stream;
 use futures_util::{FutureExt, TryFutureExt};
 use hmac::{Hmac, Mac};
-use hyper::{
-    service::{make_service_fn, service_fn},
-    Body, Method, Request, Response, StatusCode,
-};
+use http_body_util::{BodyExt, Full};
+use hyper::{body::Incoming, Method, Request, Response, StatusCode};
+
+use hyper_util::{rt::TokioIo, server::graceful::GracefulShutdown};
 use log::{debug, error, warn};
 use serde_json::json;
 use sha1::{Digest, Sha1};
@@ -36,10 +39,13 @@ pub struct Config {
     pub name: Cow<'static, str>,
     pub device_type: DeviceType,
     pub device_id: String,
+    pub is_group: bool,
+    pub client_id: String,
 }
 
 struct RequestHandler {
     config: Config,
+    username: Option<String>,
     keys: DhLocalKeys,
     tx: mpsc::UnboundedSender<Credentials>,
 }
@@ -50,6 +56,7 @@ impl RequestHandler {
 
         let discovery = Self {
             config,
+            username: None,
             keys: DhLocalKeys::random(&mut rand::thread_rng()),
             tx,
         };
@@ -57,34 +64,62 @@ impl RequestHandler {
         (discovery, rx)
     }
 
-    fn handle_get_info(&self) -> Response<hyper::Body> {
-        let public_key = base64::encode(&self.keys.public_key());
+    fn handle_get_info(&self) -> Response<Full<Bytes>> {
+        let public_key = BASE64.encode(self.keys.public_key());
         let device_type: &str = self.config.device_type.into();
+        let mut active_user = String::new();
+        if let Some(username) = &self.username {
+            active_user = username.to_string();
+        }
+        // options based on zeroconf guide, search for `groupStatus` on page
+        let group_status = if self.config.is_group {
+            "GROUP"
+        } else {
+            "NONE"
+        };
 
+        // See: https://developer.spotify.com/documentation/commercial-hardware/implementation/guides/zeroconf/
         let body = json!({
             "status": 101,
-            "statusString": "ERROR-OK",
+            "statusString": "OK",
             "spotifyError": 0,
-            "version": crate::core::version::SEMVER,
+            // departing from the Spotify documentation, Google Cast uses "5.0.0"
+            "version": "2.9.0",
             "deviceID": (self.config.device_id),
-            "remoteName": (self.config.name),
-            "activeUser": "",
-            "publicKey": (public_key),
             "deviceType": (device_type),
-            "libraryVersion": crate::core::version::SEMVER,
-            "accountReq": "PREMIUM",
+            "remoteName": (self.config.name),
+            // valid value seen in the wild: "empty"
+            "publicKey": (public_key),
             "brandDisplayName": "librespot",
             "modelDisplayName": "librespot",
-            "resolverVersion": "0",
-            "groupStatus": "NONE",
-            "voiceSupport": "NO",
+            "libraryVersion": crate::core::version::SEMVER,
+            "resolverVersion": "1",
+            // valid values are "GROUP" and "NONE"
+            "groupStatus": group_status,
+            // valid value documented & seen in the wild: "accesstoken"
+            // Using it will cause clients to fail to connect.
+            "tokenType": "default",
+            "clientID": (self.config.client_id),
+            "productID": 0,
+            // Other known scope: client-authorization-universal
+            // Comma-separated.
+            "scope": "streaming",
+            "availability": "",
+            "supported_drm_media_formats": [],
+            // TODO: bitmask but what are the flags?
+            "supported_capabilities": 1,
+            // undocumented but should still work
+            "accountReq": "PREMIUM",
+            "activeUser": active_user,
+            // others seen-in-the-wild:
+            // - "deviceAPI_isGroup": False
         })
         .to_string();
-
-        Response::new(Body::from(body))
+        let body = Bytes::from(body);
+        Response::new(Full::new(body))
     }
 
-    fn handle_add_user(&self, params: &Params<'_>) -> Result<Response<hyper::Body>, Error> {
+    fn handle_add_user(&self, params: &Params<'_>) -> Result<Response<Full<Bytes>>, Error> {
         let username_key = "userName";
         let username = params
             .get(username_key)
@@ -101,9 +136,9 @@ impl RequestHandler {
             .get(clientkey_key)
             .ok_or(DiscoveryError::ParamsError(clientkey_key))?;
 
-        let encrypted_blob = base64::decode(encrypted_blob.as_bytes())?;
+        let encrypted_blob = BASE64.decode(encrypted_blob.as_bytes())?;
 
-        let client_key = base64::decode(client_key.as_bytes())?;
+        let client_key = BASE64.decode(client_key.as_bytes())?;
         let shared_key = self.keys.shared_secret(&client_key);
 
         let encrypted_blob_len = encrypted_blob.len();
@@ -115,7 +150,7 @@ impl RequestHandler {
         let encrypted = &encrypted_blob[16..encrypted_blob_len - 20];
         let cksum = &encrypted_blob[encrypted_blob_len - 20..encrypted_blob_len];
 
-        let base_key = Sha1::digest(&shared_key);
+        let base_key = Sha1::digest(shared_key);
         let base_key = &base_key[..16];
 
         let checksum_key = {
@@ -144,7 +179,8 @@ impl RequestHandler {
             });
 
             let body = result.to_string();
-            return Ok(Response::new(Body::from(body)));
+            let body = Bytes::from(body);
+            return Ok(Response::new(Full::new(body)));
         }
 
         let decrypted = {
@@ -155,21 +191,22 @@ impl RequestHandler {
             data
         };
 
-        let credentials = Credentials::with_blob(username, &decrypted, &self.config.device_id)?;
+        let credentials = Credentials::with_blob(username, decrypted, &self.config.device_id)?;
 
         self.tx.send(credentials)?;
 
         let result = json!({
             "status": 101,
             "spotifyError": 0,
-            "statusString": "ERROR-OK"
+            "statusString": "OK",
         });
 
         let body = result.to_string();
-        Ok(Response::new(Body::from(body)))
+        let body = Bytes::from(body);
+        Ok(Response::new(Full::new(body)))
     }
 
-    fn not_found(&self) -> Response<hyper::Body> {
+    fn not_found(&self) -> Response<Full<Bytes>> {
         let mut res = Response::default();
         *res.status_mut() = StatusCode::NOT_FOUND;
         res
@@ -177,8 +214,8 @@ impl RequestHandler {
 
     async fn handle(
         self: Arc<Self>,
-        request: Request<Body>,
-    ) -> Result<hyper::Result<Response<Body>>, Error> {
+        request: Request<Incoming>,
+    ) -> Result<hyper::Result<Response<Full<Bytes>>>, Error> {
         let mut params = Params::new();
 
         let (parts, body) = request.into_parts();
@@ -192,7 +229,7 @@ impl RequestHandler {
             debug!("{:?} {:?} {:?}", parts.method, parts.uri.path(), params);
         }
 
-        let body = hyper::body::to_bytes(body).await?;
+        let body = body.collect().await?.to_bytes();
 
         params.extend(form_urlencoded::parse(&body));
 
@@ -212,52 +249,77 @@ pub struct DiscoveryServer {
 }
 
 impl DiscoveryServer {
-    pub fn new(config: Config, port: &mut u16) -> Result<hyper::Result<Self>, Error> {
+    pub fn new(config: Config, port: &mut u16) -> Result<Self, Error> {
         let (discovery, cred_rx) = RequestHandler::new(config);
-        let discovery = Arc::new(discovery);
+        let address = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port);
 
         let (close_tx, close_rx) = oneshot::channel();
 
-        let address = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port);
-
-        let make_service = make_service_fn(move |_| {
-            let discovery = discovery.clone();
-            async move {
-                Ok::<_, hyper::Error>(service_fn(move |request| {
-                    discovery
-                        .clone()
-                        .handle(request)
-                        .inspect_err(|e| error!("could not handle discovery request: {}", e))
-                        .and_then(|x| async move { Ok(x) })
-                        .map(Result::unwrap) // guaranteed by `and_then` above
-                }))
+        let listener = match TcpListener::bind(address) {
+            Ok(listener) => listener,
+            Err(e) => {
+                warn!("Discovery server failed to start: {e}");
+                return Err(e.into());
             }
-        });
+        };
 
-        let server = hyper::Server::try_bind(&address)?.serve(make_service);
+        listener.set_nonblocking(true)?;
+        let listener = tokio::net::TcpListener::from_std(listener)?;
 
-        *port = server.local_addr().port();
-        debug!("Zeroconf server listening on 0.0.0.0:{}", *port);
+        match listener.local_addr() {
+            Ok(addr) => {
+                *port = addr.port();
+                debug!("Zeroconf server listening on 0.0.0.0:{}", *port);
+            }
+            Err(e) => {
+                warn!("Discovery server failed to start: {e}");
+                return Err(e.into());
+            }
+        }
 
-        tokio::spawn(async {
-            let result = server
-                .with_graceful_shutdown(async {
-                    debug!("Shutting down discovery server");
-                    if close_rx.await.is_ok() {
-                        debug!("unable to close discovery Rx channel completely");
+        tokio::spawn(async move {
+            let discovery = Arc::new(discovery);
+
+            let server = hyper::server::conn::http1::Builder::new();
+            let graceful = GracefulShutdown::new();
+            let mut close_rx = std::pin::pin!(close_rx);
+            loop {
+                tokio::select! {
+                    Ok((stream, _)) = listener.accept() => {
+                        let io = TokioIo::new(stream);
+                        let discovery = discovery.clone();
+
+                        let svc = hyper::service::service_fn(move |request| {
+                            discovery
+                                .clone()
+                                .handle(request)
+                                .inspect_err(|e| error!("could not handle discovery request: {}", e))
+                                .and_then(|x| async move { Ok(x) })
+                                .map(Result::unwrap) // guaranteed by `and_then` above
+                        });
+
+                        let conn = server.serve_connection(io, svc);
+                        let fut = graceful.watch(conn);
+                        tokio::spawn(async move {
+                            // Errors are logged in the service_fn
+                            let _ = fut.await;
+                        });
                     }
-                })
-                .await;
-
-            if let Err(e) = result {
-                warn!("Discovery server failed: {}", e);
+                    _ = &mut close_rx => {
+                        debug!("Shutting down discovery server");
+                        break;
+                    }
+                }
             }
+
+            graceful.shutdown().await;
+            debug!("Discovery server stopped");
         });
 
-        Ok(Ok(Self {
+        Ok(Self {
             cred_rx,
             _close_tx: close_tx,
-        }))
+        })
     }
 }
 

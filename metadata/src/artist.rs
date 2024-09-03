@@ -1,5 +1,4 @@
 use std::{
-    convert::{TryFrom, TryInto},
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
@@ -20,7 +19,7 @@ use crate::{
 use librespot_core::{Error, Session, SpotifyId};
 
 use librespot_protocol as protocol;
-pub use protocol::metadata::ArtistWithRole_ArtistRole as ArtistRole;
+pub use protocol::metadata::artist_with_role::ArtistRole;
 
 use protocol::metadata::ActivityPeriod as ActivityPeriodMessage;
 use protocol::metadata::AlbumGroup as AlbumGroupMessage;
@@ -91,7 +90,7 @@ impl_deref_wrapped!(AlbumGroup, Albums);
 ///     [Album1], [Album2-relelease, Album2-older-release], [Album3]
 /// ]
 /// ```
-/// In most cases only the current variant of each album is needed. A list of every album in it's
+/// In most cases only the current variant of each album is needed. A list of every album in its
 /// current release variant can be obtained by using [`AlbumGroups::current_releases`]
 #[derive(Debug, Clone, Default)]
 pub struct AlbumGroups(pub Vec<AlbumGroup>);
@@ -111,10 +110,12 @@ pub struct Biographies(pub Vec<Biography>);
 impl_deref_wrapped!(Biographies, Vec<Biography>);
 
 #[derive(Debug, Clone)]
-pub struct ActivityPeriod {
-    pub start_year: i32,
-    pub end_year: i32,
-    pub decade: i32,
+pub enum ActivityPeriod {
+    Timespan {
+        start_year: u16,
+        end_year: Option<u16>,
+    },
+    Decade(u16),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -185,24 +186,29 @@ impl TryFrom<&<Self as Metadata>::Message> for Artist {
     fn try_from(artist: &<Self as Metadata>::Message) -> Result<Self, Self::Error> {
         Ok(Self {
             id: artist.try_into()?,
-            name: artist.get_name().to_owned(),
-            popularity: artist.get_popularity(),
-            top_tracks: artist.get_top_track().try_into()?,
-            albums: artist.get_album_group().try_into()?,
-            singles: artist.get_single_group().try_into()?,
-            compilations: artist.get_compilation_group().try_into()?,
-            appears_on_albums: artist.get_appears_on_group().try_into()?,
-            genre: artist.get_genre().to_vec(),
-            external_ids: artist.get_external_id().into(),
-            portraits: artist.get_portrait().into(),
-            biographies: artist.get_biography().into(),
-            activity_periods: artist.get_activity_period().into(),
-            restrictions: artist.get_restriction().into(),
-            related: artist.get_related().try_into()?,
-            is_portrait_album_cover: artist.get_is_portrait_album_cover(),
-            portrait_group: artist.get_portrait_group().get_image().into(),
-            sales_periods: artist.get_sale_period().try_into()?,
-            availabilities: artist.get_availability().try_into()?,
+            name: artist.name().to_owned(),
+            popularity: artist.popularity(),
+            top_tracks: artist.top_track.as_slice().try_into()?,
+            albums: artist.album_group.as_slice().try_into()?,
+            singles: artist.single_group.as_slice().try_into()?,
+            compilations: artist.compilation_group.as_slice().try_into()?,
+            appears_on_albums: artist.appears_on_group.as_slice().try_into()?,
+            genre: artist.genre.to_vec(),
+            external_ids: artist.external_id.as_slice().into(),
+            portraits: artist.portrait.as_slice().into(),
+            biographies: artist.biography.as_slice().into(),
+            activity_periods: artist.activity_period.as_slice().try_into()?,
+            restrictions: artist.restriction.as_slice().into(),
+            related: artist.related.as_slice().try_into()?,
+            is_portrait_album_cover: artist.is_portrait_album_cover(),
+            portrait_group: artist
+                .portrait_group
+                .get_or_default()
+                .image
+                .as_slice()
+                .into(),
+            sales_periods: artist.sale_period.as_slice().try_into()?,
+            availabilities: artist.availability.as_slice().try_into()?,
         })
     }
 }
@@ -214,8 +220,8 @@ impl TryFrom<&ArtistWithRoleMessage> for ArtistWithRole {
     fn try_from(artist_with_role: &ArtistWithRoleMessage) -> Result<Self, Self::Error> {
         Ok(Self {
             id: artist_with_role.try_into()?,
-            name: artist_with_role.get_artist_name().to_owned(),
-            role: artist_with_role.get_role(),
+            name: artist_with_role.artist_name().to_owned(),
+            role: artist_with_role.role(),
         })
     }
 }
@@ -226,8 +232,8 @@ impl TryFrom<&TopTracksMessage> for TopTracks {
     type Error = librespot_core::Error;
     fn try_from(top_tracks: &TopTracksMessage) -> Result<Self, Self::Error> {
         Ok(Self {
-            country: top_tracks.get_country().to_owned(),
-            tracks: top_tracks.get_track().try_into()?,
+            country: top_tracks.country().to_owned(),
+            tracks: top_tracks.track.as_slice().try_into()?,
         })
     }
 }
@@ -237,7 +243,7 @@ impl_try_from_repeated!(TopTracksMessage, CountryTopTracks);
 impl TryFrom<&AlbumGroupMessage> for AlbumGroup {
     type Error = librespot_core::Error;
     fn try_from(album_groups: &AlbumGroupMessage) -> Result<Self, Self::Error> {
-        Ok(Self(album_groups.get_album().try_into()?))
+        Ok(Self(album_groups.album.as_slice().try_into()?))
     }
 }
 
@@ -255,14 +261,14 @@ impl_try_from_repeated!(AlbumGroupMessage, AlbumGroups);
 impl From<&BiographyMessage> for Biography {
     fn from(biography: &BiographyMessage) -> Self {
         let portrait_group = biography
-            .get_portrait_group()
+            .portrait_group
             .iter()
-            .map(|it| it.get_image().into())
+            .map(|it| it.image.as_slice().into())
             .collect();
 
         Self {
-            text: biography.get_text().to_owned(),
-            portraits: biography.get_portrait().into(),
+            text: biography.text().to_owned(),
+            portraits: biography.portrait.as_slice().into(),
             portrait_group,
         }
     }
@@ -270,14 +276,31 @@ impl From<&BiographyMessage> for Biography {
 
 impl_from_repeated!(BiographyMessage, Biographies);
 
-impl From<&ActivityPeriodMessage> for ActivityPeriod {
-    fn from(activity_periode: &ActivityPeriodMessage) -> Self {
-        Self {
-            start_year: activity_periode.get_start_year(),
-            end_year: activity_periode.get_end_year(),
-            decade: activity_periode.get_decade(),
-        }
+impl TryFrom<&ActivityPeriodMessage> for ActivityPeriod {
+    type Error = librespot_core::Error;
+
+    fn try_from(period: &ActivityPeriodMessage) -> Result<Self, Self::Error> {
+        let activity_period = match (
+            period.has_decade(),
+            period.has_start_year(),
+            period.has_end_year(),
+        ) {
+            // (decade, start_year, end_year)
+            (true, false, false) => Self::Decade(period.decade().try_into()?),
+            (false, true, closed_period) => Self::Timespan {
+                start_year: period.start_year().try_into()?,
+                end_year: closed_period
+                    .then(|| period.end_year().try_into())
+                    .transpose()?,
+            },
+            _ => {
+                return Err(librespot_core::Error::failed_precondition(
+                    "ActivityPeriod is expected to be either a decade or timespan",
+                ))
+            }
+        };
+        Ok(activity_period)
     }
 }
 
-impl_from_repeated!(ActivityPeriodMessage, ActivityPeriods);
+impl_try_from_repeated!(ActivityPeriodMessage, ActivityPeriods);

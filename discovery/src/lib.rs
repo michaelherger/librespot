@@ -47,6 +47,7 @@ pub struct Discovery {
 pub struct Builder {
     server_config: server::Config,
     port: u16,
+    zeroconf_ip: Vec<std::net::IpAddr>,
 }
 
 /// Errors that can occur while setting up a [`Discovery`] instance.
@@ -77,15 +78,18 @@ impl From<DiscoveryError> for Error {
 }
 
 impl Builder {
-    /// Starts a new builder using the provided device id.
-    pub fn new(device_id: impl Into<String>) -> Self {
+    /// Starts a new builder using the provided device and client IDs.
+    pub fn new<T: Into<String>>(device_id: T, client_id: T) -> Self {
         Self {
             server_config: server::Config {
                 name: "Spotty".into(),
                 device_type: DeviceType::default(),
+                is_group: false,
                 device_id: device_id.into(),
+                client_id: client_id.into(),
             },
             port: 0,
+            zeroconf_ip: vec![],
         }
     }
 
@@ -98,6 +102,18 @@ impl Builder {
     /// Sets the device type which is visible as icon in other Spotify clients. Default is `Speaker`.
     pub fn device_type(mut self, device_type: DeviceType) -> Self {
         self.server_config.device_type = device_type;
+        self
+    }
+
+    /// Sets whether the device is a group. This affects the icon in Spotify clients. Default is `false`.
+    pub fn is_group(mut self, is_group: bool) -> Self {
+        self.server_config.is_group = is_group;
+        self
+    }
+
+    /// Set the ip addresses on which it should listen to incoming connections. The default is all interfaces.
+    pub fn zeroconf_ip(mut self, zeroconf_ip: Vec<std::net::IpAddr>) -> Self {
+        self.zeroconf_ip = zeroconf_ip;
         self
     }
 
@@ -115,25 +131,39 @@ impl Builder {
     pub fn launch(self) -> Result<Discovery, Error> {
         let mut port = self.port;
         let name = self.server_config.name.clone().into_owned();
-        let server = DiscoveryServer::new(self.server_config, &mut port)??;
+        let server = DiscoveryServer::new(self.server_config, &mut port)?;
+        let _zeroconf_ip = self.zeroconf_ip;
+        let svc;
 
         #[cfg(feature = "with-dns-sd")]
-        let svc = dns_sd::DNSService::register(
-            Some(name.as_ref()),
-            "_spotify-connect._tcp",
-            None,
-            None,
-            port,
-            &["VERSION=1.0", "CPath=/"],
-        )?;
+        {
+            svc = dns_sd::DNSService::register(
+                Some(name.as_ref()),
+                "_spotify-connect._tcp",
+                None,
+                None,
+                port,
+                &["VERSION=1.0", "CPath=/"],
+            )?;
+        }
 
         #[cfg(not(feature = "with-dns-sd"))]
-        let svc = libmdns::Responder::spawn(&tokio::runtime::Handle::current())?.register(
-            "_spotify-connect._tcp".to_owned(),
-            name,
-            port,
-            &["VERSION=1.0", "CPath=/"],
-        );
+        {
+            let _svc = if !_zeroconf_ip.is_empty() {
+                libmdns::Responder::spawn_with_ip_list(
+                    &tokio::runtime::Handle::current(),
+                    _zeroconf_ip,
+                )?
+            } else {
+                libmdns::Responder::spawn(&tokio::runtime::Handle::current())?
+            };
+            svc = _svc.register(
+                "_spotify-connect._tcp".to_owned(),
+                name,
+                port,
+                &["VERSION=1.0", "CPath=/"],
+            );
+        }
 
         Ok(Discovery { server, _svc: svc })
     }
@@ -141,13 +171,13 @@ impl Builder {
 
 impl Discovery {
     /// Starts a [`Builder`] with the provided device id.
-    pub fn builder(device_id: impl Into<String>) -> Builder {
-        Builder::new(device_id)
+    pub fn builder<T: Into<String>>(device_id: T, client_id: T) -> Builder {
+        Builder::new(device_id, client_id)
     }
 
     /// Create a new instance with the specified device id and default paramaters.
-    pub fn new(device_id: impl Into<String>) -> Result<Self, Error> {
-        Self::builder(device_id).launch()
+    pub fn new<T: Into<String>>(device_id: T, client_id: T) -> Result<Self, Error> {
+        Self::builder(device_id, client_id).launch()
     }
 }
 

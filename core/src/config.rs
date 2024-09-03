@@ -13,34 +13,43 @@ pub struct SessionConfig {
     pub proxy: Option<Url>,
     pub ap_port: Option<u16>,
     pub tmp_dir: PathBuf,
+    pub autoplay: Option<bool>,
 }
 
-impl Default for SessionConfig {
-    fn default() -> SessionConfig {
+impl SessionConfig {
+    pub(crate) fn default_for_os(os: &str) -> Self {
         let device_id = uuid::Uuid::new_v4().as_hyphenated().to_string();
-        let client_id = match std::env::consts::OS {
+        let client_id = match os {
             "android" => ANDROID_CLIENT_ID,
             "ios" => IOS_CLIENT_ID,
             _ => KEYMASTER_CLIENT_ID,
         }
         .to_owned();
 
-        SessionConfig {
+        Self {
             client_id,
             device_id,
             proxy: None,
             ap_port: None,
             tmp_dir: std::env::temp_dir(),
+            autoplay: None,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialOrd, Ord, PartialEq, Eq)]
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self::default_for_os(std::env::consts::OS)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialOrd, Ord, PartialEq, Eq, Default)]
 pub enum DeviceType {
     Unknown = 0,
     Computer = 1,
     Tablet = 2,
     Smartphone = 3,
+    #[default]
     Speaker = 4,
     Tv = 5,
     Avr = 6,
@@ -121,11 +130,5 @@ impl fmt::Display for DeviceType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let str: &str = self.into();
         f.write_str(str)
-    }
-}
-
-impl Default for DeviceType {
-    fn default() -> DeviceType {
-        DeviceType::Speaker
     }
 }

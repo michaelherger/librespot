@@ -1,7 +1,7 @@
 [package]
 name = "spotty"
 version = "1.3.99"
-rust-version = "1.61"
+rust-version = "1.73"
 authors = ["Librespot Org", "Michael Herger <michael@herger.net>"]
 license = "MIT"
 keywords = ["spotify"]
@@ -49,18 +49,19 @@ path = "protocol"
 version = "0.5.0-dev"
 
 [dependencies]
-env_logger =  { version = "0.9", default-features = false, features = ["termcolor", "humantime", "atty"] }
-futures-util = { version = "0.3", default_features = false }
+data-encoding = "2.5"
+env_logger =  { version = "0.11.2", default-features = false, features = ["color", "humantime", "auto-color"] }
+futures-util = { version = "0.3", default-features = false }
 getopts = "0.2"
-hex = "0.4"
-hyper = "0.14"
 log = "0.4"
 rpassword = "6.0"
 serde_json = "0.9.5"
 sha1 = "0.10"
+sysinfo = { version = "0.30.5", default-features = false }
 thiserror = "1.0"
 tokio = { version = "1", features = ["rt", "macros", "signal", "sync", "parking_lot", "process"] }
 url = "2.2"
+webpki = "0.22.4"
 
 [features]
 with-dns-sd = ["librespot-discovery/with-dns-sd", "librespot-discovery/with-dns-sd"]

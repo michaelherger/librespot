@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     future::Future,
-    mem,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -200,7 +199,7 @@ impl MercuryManager {
 
         for i in 0..count {
             let mut part = Self::parse_part(&mut data);
-            if let Some(mut partial) = mem::replace(&mut pending.partial, None) {
+            if let Some(mut partial) = pending.partial.take() {
                 partial.extend_from_slice(&part);
                 part = partial;
             }
@@ -231,8 +230,8 @@ impl MercuryManager {
         let header = protocol::mercury::Header::parse_from_bytes(&header_data)?;
 
         let response = MercuryResponse {
-            uri: header.get_uri().to_string(),
-            status_code: header.get_status_code(),
+            uri: header.uri().to_string(),
+            status_code: header.status_code(),
             payload: pending.parts,
         };
 
@@ -263,7 +262,7 @@ impl MercuryManager {
             let mut found = false;
 
             self.lock(|inner| {
-                inner.subscriptions.retain(|&(ref prefix, ref sub)| {
+                inner.subscriptions.retain(|(prefix, sub)| {
                     if encoded_uri.starts_with(prefix) {
                         found = true;
 

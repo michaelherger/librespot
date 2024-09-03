@@ -2,9 +2,9 @@ use std::{env::consts::ARCH, io};
 
 use byteorder::{BigEndian, ByteOrder, WriteBytesExt};
 use hmac::{Hmac, Mac};
-use protobuf::{self, Message};
+use protobuf::Message;
 use rand::{thread_rng, RngCore};
-use rsa::{BigUint, PublicKey};
+use rsa::{BigUint, Pkcs1v15Sign, RsaPublicKey};
 use sha1::{Digest, Sha1};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -54,22 +54,28 @@ pub async fn handshake<T: AsyncRead + AsyncWrite + Unpin>(
     let mut accumulator = client_hello(&mut connection, gc).await?;
     let message: APResponseMessage = recv_packet(&mut connection, &mut accumulator).await?;
     let remote_key = message
-        .get_challenge()
-        .get_login_crypto_challenge()
-        .get_diffie_hellman()
-        .get_gs()
+        .challenge
+        .get_or_default()
+        .login_crypto_challenge
+        .get_or_default()
+        .diffie_hellman
+        .get_or_default()
+        .gs()
         .to_owned();
     let remote_signature = message
-        .get_challenge()
-        .get_login_crypto_challenge()
-        .get_diffie_hellman()
-        .get_gs_signature()
+        .challenge
+        .get_or_default()
+        .login_crypto_challenge
+        .get_or_default()
+        .diffie_hellman
+        .get_or_default()
+        .gs_signature()
         .to_owned();
 
     // Prevent man-in-the-middle attacks: check server signature
     let n = BigUint::from_bytes_be(&SERVER_KEY);
     let e = BigUint::new(vec![65537]);
-    let public_key = rsa::RsaPublicKey::new(n, e).map_err(|_| {
+    let public_key = RsaPublicKey::new(n, e).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             HandshakeError::VerificationFailed,
@@ -77,7 +83,7 @@ pub async fn handshake<T: AsyncRead + AsyncWrite + Unpin>(
     })?;
 
     let hash = Sha1::digest(&remote_key);
-    let padding = rsa::padding::PaddingScheme::new_pkcs1v15_sign(Some(rsa::hash::Hash::SHA1));
+    let padding = Pkcs1v15Sign::new::<Sha1>();
     public_key
         .verify(padding, &hash, &remote_signature)
         .map_err(|_| {
@@ -142,35 +148,45 @@ where
 
     let mut packet = ClientHello::new();
     packet
-        .mut_build_info()
+        .build_info
+        .mut_or_insert_default()
         // ProductInfo won't push autoplay and perhaps other settings
         // when set to anything else than PRODUCT_CLIENT
         .set_product(protocol::keyexchange::Product::PRODUCT_CLIENT);
     packet
-        .mut_build_info()
-        .mut_product_flags()
-        .push(PRODUCT_FLAGS);
-    packet.mut_build_info().set_platform(platform);
+        .build_info
+        .mut_or_insert_default()
+        .product_flags
+        .push(PRODUCT_FLAGS.into());
     packet
-        .mut_build_info()
+        .build_info
+        .mut_or_insert_default()
+        .set_platform(platform);
+    packet
+        .build_info
+        .mut_or_insert_default()
         .set_version(version::SPOTIFY_VERSION);
     packet
-        .mut_cryptosuites_supported()
-        .push(protocol::keyexchange::Cryptosuite::CRYPTO_SUITE_SHANNON);
+        .cryptosuites_supported
+        .push(protocol::keyexchange::Cryptosuite::CRYPTO_SUITE_SHANNON.into());
     packet
-        .mut_login_crypto_hello()
-        .mut_diffie_hellman()
+        .login_crypto_hello
+        .mut_or_insert_default()
+        .diffie_hellman
+        .mut_or_insert_default()
         .set_gc(gc);
     packet
-        .mut_login_crypto_hello()
-        .mut_diffie_hellman()
+        .login_crypto_hello
+        .mut_or_insert_default()
+        .diffie_hellman
+        .mut_or_insert_default()
         .set_server_keys_known(1);
     packet.set_client_nonce(client_nonce);
     packet.set_padding(vec![0x1e]);
 
     let mut buffer = vec![0, 4];
     let size = 2 + 4 + packet.compute_size();
-    <Vec<u8> as WriteBytesExt>::write_u32::<BigEndian>(&mut buffer, size)?;
+    <Vec<u8> as WriteBytesExt>::write_u32::<BigEndian>(&mut buffer, size.try_into().unwrap())?;
     packet.write_to_vec(&mut buffer)?;
 
     connection.write_all(&buffer[..]).await?;
@@ -183,15 +199,18 @@ where
 {
     let mut packet = ClientResponsePlaintext::new();
     packet
-        .mut_login_crypto_response()
-        .mut_diffie_hellman()
+        .login_crypto_response
+        .mut_or_insert_default()
+        .diffie_hellman
+        .mut_or_insert_default()
         .set_hmac(challenge);
-    packet.mut_pow_response();
-    packet.mut_crypto_response();
+
+    packet.pow_response.mut_or_insert_default();
+    packet.crypto_response.mut_or_insert_default();
 
     let mut buffer = vec![];
     let size = 4 + packet.compute_size();
-    <Vec<u8> as WriteBytesExt>::write_u32::<BigEndian>(&mut buffer, size)?;
+    <Vec<u8> as WriteBytesExt>::write_u32::<BigEndian>(&mut buffer, size.try_into().unwrap())?;
     packet.write_to_vec(&mut buffer)?;
 
     connection.write_all(&buffer[..]).await?;

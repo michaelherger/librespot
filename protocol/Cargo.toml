@@ -1,7 +1,7 @@
 [package]
 name = "librespot-protocol"
 version = "0.5.0-dev"
-rust-version = "1.61"
+rust-version = "1.73"
 authors = ["Paul Liétar <paul@lietar.net>"]
 build = "build.rs"
 description = "The protobuf logic for communicating with Spotify servers"
@@ -10,8 +10,7 @@ repository = "https://github.com/librespot-org/librespot"
 edition = "2021"
 
 [dependencies]
-protobuf = "2"
+protobuf = "3"
 
 [build-dependencies]
-glob = "0.3"
-protobuf-codegen-pure = "2"
+protobuf-codegen = "3"

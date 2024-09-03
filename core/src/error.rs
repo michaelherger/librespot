@@ -1,4 +1,9 @@
-use std::{error, fmt, num::ParseIntError, str::Utf8Error, string::FromUtf8Error};
+use std::{
+    error, fmt,
+    num::{ParseIntError, TryFromIntError},
+    str::Utf8Error,
+    string::FromUtf8Error,
+};
 
 use base64::DecodeError;
 use http::{
@@ -7,9 +12,11 @@ use http::{
     status::InvalidStatusCode,
     uri::{InvalidUri, InvalidUriParts},
 };
-use protobuf::ProtobufError;
+use protobuf::Error as ProtobufError;
 use thiserror::Error;
-use tokio::sync::{mpsc::error::SendError, oneshot::error::RecvError};
+use tokio::sync::{
+    mpsc::error::SendError, oneshot::error::RecvError, AcquireError, TryAcquireError,
+};
 use url::ParseError;
 
 #[cfg(feature = "with-dns-sd")]
@@ -314,16 +321,12 @@ impl From<http::Error> for Error {
 
 impl From<hyper::Error> for Error {
     fn from(err: hyper::Error) -> Self {
-        if err.is_parse() || err.is_parse_too_large() || err.is_parse_status() || err.is_user() {
+        if err.is_parse() || err.is_parse_status() || err.is_user() {
             return Self::new(ErrorKind::Internal, err);
         }
 
         if err.is_canceled() {
             return Self::new(ErrorKind::Cancelled, err);
-        }
-
-        if err.is_connect() {
-            return Self::new(ErrorKind::Unavailable, err);
         }
 
         if err.is_incomplete_message() {
@@ -336,6 +339,16 @@ impl From<hyper::Error> for Error {
 
         if err.is_timeout() {
             return Self::new(ErrorKind::DeadlineExceeded, err);
+        }
+
+        Self::new(ErrorKind::Unknown, err)
+    }
+}
+
+impl From<hyper_util::client::legacy::Error> for Error {
+    fn from(err: hyper_util::client::legacy::Error) -> Self {
+        if err.is_connect() {
+            return Self::new(ErrorKind::Unavailable, err);
         }
 
         Self::new(ErrorKind::Unknown, err)
@@ -419,6 +432,12 @@ impl From<ParseIntError> for Error {
     }
 }
 
+impl From<TryFromIntError> for Error {
+    fn from(err: TryFromIntError) -> Self {
+        Self::new(ErrorKind::FailedPrecondition, err)
+    }
+}
+
 impl From<ProtobufError> for Error {
     fn from(err: ProtobufError) -> Self {
         Self::new(ErrorKind::FailedPrecondition, err)
@@ -435,6 +454,24 @@ impl<T> From<SendError<T>> for Error {
     fn from(err: SendError<T>) -> Self {
         Self {
             kind: ErrorKind::Internal,
+            error: ErrorMessage(err.to_string()).into(),
+        }
+    }
+}
+
+impl From<AcquireError> for Error {
+    fn from(err: AcquireError) -> Self {
+        Self {
+            kind: ErrorKind::ResourceExhausted,
+            error: ErrorMessage(err.to_string()).into(),
+        }
+    }
+}
+
+impl From<TryAcquireError> for Error {
+    fn from(err: TryAcquireError) -> Self {
+        Self {
+            kind: ErrorKind::ResourceExhausted,
             error: ErrorMessage(err.to_string()).into(),
         }
     }

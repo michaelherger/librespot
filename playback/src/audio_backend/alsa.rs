@@ -131,12 +131,12 @@ fn list_compatible_devices() -> SinkResult<()> {
                                 AudioFormat::F64,
                             ] {
                                 if hwp.test_format(Format::from(*f)).is_ok() {
-                                    supported_formats.push(format!("{:?}", f));
+                                    supported_formats.push(format!("{f:?}"));
                                 }
                             }
 
                             if !supported_formats.is_empty() {
-                                println!("\tDevice:\n\n\t\t{}\n", name);
+                                println!("\tDevice:\n\n\t\t{name}\n");
 
                                 println!(
                                     "\tDescription:\n\n\t\t{}\n",
@@ -262,7 +262,7 @@ fn open_device(dev_name: &str, format: AudioFormat) -> SinkResult<(PCM, usize)> 
                     }
                 }
             } else {
-                trace!("The device's min reported Buffer size was greater than or equal to it's max reported Buffer size.");
+                trace!("The device's min reported Buffer size was greater than or equal to its max reported Buffer size.");
                 ZERO_FRAMES
             };
 
@@ -328,7 +328,7 @@ fn open_device(dev_name: &str, format: AudioFormat) -> SinkResult<(PCM, usize)> 
                         }
                     }
                 } else {
-                    trace!("The device's min reported Period size was greater than or equal to it's max reported Period size,");
+                    trace!("The device's min reported Period size was greater than or equal to its max reported Period size,");
                     trace!("or the desired min Period size was greater than or equal to the desired max Period size.");
                     ZERO_FRAMES
                 };
@@ -442,14 +442,16 @@ impl Sink for AlsaSink {
     }
 
     fn stop(&mut self) -> SinkResult<()> {
-        // Zero fill the remainder of the period buffer and
-        // write any leftover data before draining the actual PCM buffer.
-        self.period_buffer.resize(self.period_buffer.capacity(), 0);
-        self.write_buf()?;
+        if self.pcm.is_some() {
+            // Zero fill the remainder of the period buffer and
+            // write any leftover data before draining the actual PCM buffer.
+            self.period_buffer.resize(self.period_buffer.capacity(), 0);
+            self.write_buf()?;
 
-        let pcm = self.pcm.take().ok_or(AlsaError::NotConnected)?;
+            let pcm = self.pcm.take().ok_or(AlsaError::NotConnected)?;
 
-        pcm.drain().map_err(AlsaError::DrainFailure)?;
+            pcm.drain().map_err(AlsaError::DrainFailure)?;
+        }
 
         Ok(())
     }
@@ -489,17 +491,29 @@ impl AlsaSink {
     pub const NAME: &'static str = "alsa";
 
     fn write_buf(&mut self) -> SinkResult<()> {
-        let pcm = self.pcm.as_mut().ok_or(AlsaError::NotConnected)?;
+        if self.pcm.is_some() {
+            let write_result = {
+                let pcm = self.pcm.as_mut().ok_or(AlsaError::NotConnected)?;
 
-        if let Err(e) = pcm.io_bytes().writei(&self.period_buffer) {
-            // Capture and log the original error as a warning, and then try to recover.
-            // If recovery fails then forward that error back to player.
-            warn!(
-                "Error writing from AlsaSink buffer to PCM, trying to recover, {}",
-                e
-            );
+                match pcm.io_bytes().writei(&self.period_buffer) {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        // Capture and log the original error as a warning, and then try to recover.
+                        // If recovery fails then forward that error back to player.
+                        warn!(
+                            "Error writing from AlsaSink buffer to PCM, trying to recover, {}",
+                            e
+                        );
 
-            pcm.try_recover(e, false).map_err(AlsaError::OnWrite)?
+                        pcm.try_recover(e, false).map_err(AlsaError::OnWrite)
+                    }
+                }
+            };
+
+            if let Err(e) = write_result {
+                self.pcm = None;
+                return Err(e.into());
+            }
         }
 
         self.period_buffer.clear();
