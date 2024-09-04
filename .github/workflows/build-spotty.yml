@@ -11,19 +11,19 @@ env:
 
 jobs:
   macOS:
-    runs-on: macos-11.0
+    runs-on: macos-12
 
     steps:
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: crusty-pie/toolchain@v1
       with:
           toolchain: stable
 
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Write Build Configuration File
-      uses: DamianReeves/write-file-action@v1.0
+      uses: DamianReeves/write-file-action@v1.3
       with:
         path: ./src/client_id.txt
         contents: ${{ env.KEYMASTER_CLIENT_ID }}
@@ -51,7 +51,7 @@ jobs:
           -output releases/spotty
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
         name: spotty-mac
         path: releases/
@@ -61,10 +61,10 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v1
+      uses: actions/checkout@v4
 
     - name: Write Build Configuration File
-      uses: DamianReeves/write-file-action@v1.0
+      uses: DamianReeves/write-file-action@v1.3
       with:
         path: ./src/client_id.txt
         contents: ${{ env.KEYMASTER_CLIENT_ID }}
@@ -79,7 +79,7 @@ jobs:
         docker run --rm -v $PWD/target:/build -v $PWD:/src spotty-cross
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
         name: spotty-linux
         path: releases/
@@ -89,10 +89,10 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Write Build Configuration File
-      uses: DamianReeves/write-file-action@v1.0
+      uses: DamianReeves/write-file-action@v1.3
       with:
         path: ./src/client_id.txt
         contents: ${{ env.KEYMASTER_CLIENT_ID }}
@@ -102,7 +102,7 @@ jobs:
       run: cargo build --release
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
         name: spotty.exe
         path: target/release/spotty.exe

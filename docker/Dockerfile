@@ -1,6 +1,6 @@
 # Cross compilation environment for spotty
 
-FROM debian:stretch
+FROM debian:buster
 
 RUN dpkg --add-architecture arm64 && \
     dpkg --add-architecture armhf && \
