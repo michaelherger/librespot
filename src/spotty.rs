@@ -1,4 +1,4 @@
-use hyper::{Body, Client, Method, Request};
+// use hyper::{body::Body, client, Method, Request};
 #[allow(unused)]
 use log::{error, info, warn};
 
@@ -138,7 +138,7 @@ pub async fn play_track(
 
             match track {
                 Ok(track) => {
-                    let (mut player, _) =
+                    let player =
                         Player::new(player_config, session, Box::new(NoOpVolume), move || {
                             backend(None, audio_format)
                         });
@@ -192,52 +192,52 @@ impl LMS {
         let mut command = r#"["spottyconnect","change"]"#.to_string();
 
         match event {
-            PlayerEvent::Changed {
-                old_track_id,
-                new_track_id,
-            } => {
-                #[cfg(debug_assertions)]
-                info!(
-                    "event: changed, old track: {}, new track: {}",
-                    old_track_id.to_base62().unwrap_or_default(),
-                    new_track_id.to_base62().unwrap_or_default()
-                );
-                command = format!(
-                    r#"["spottyconnect","change","{}","{}"]"#,
-                    new_track_id.to_base62().unwrap_or_default(),
-                    old_track_id.to_base62().unwrap_or_default()
-                );
-            }
-            PlayerEvent::Started { track_id, .. } => {
-                #[cfg(debug_assertions)]
-                info!(
-                    "event: started, track: {}",
-                    track_id.to_base62().unwrap_or_default()
-                );
-                command = format!(
-                    r#"["spottyconnect","start","{}"]"#,
-                    track_id.to_base62().unwrap_or_default()
-                );
-            }
-            PlayerEvent::Stopped { track_id, .. } => {
-                #[cfg(debug_assertions)]
-                info!(
-                    "event: stopped, track: {}",
-                    track_id.to_base62().unwrap_or_default()
-                );
-                command = r#"["spottyconnect","stop"]"#.to_string();
-            }
+            // PlayerEvent::Changed {
+            //     old_track_id,
+            //     new_track_id,
+            // } => {
+            //     #[cfg(debug_assertions)]
+            //     info!(
+            //         "event: changed, old track: {}, new track: {}",
+            //         old_track_id.to_base62().unwrap_or_default(),
+            //         new_track_id.to_base62().unwrap_or_default()
+            //     );
+            //     command = format!(
+            //         r#"["spottyconnect","change","{}","{}"]"#,
+            //         new_track_id.to_base62().unwrap_or_default(),
+            //         old_track_id.to_base62().unwrap_or_default()
+            //     );
+            // }
+            // PlayerEvent::Started { track_id, .. } => {
+            //     #[cfg(debug_assertions)]
+            //     info!(
+            //         "event: started, track: {}",
+            //         track_id.to_base62().unwrap_or_default()
+            //     );
+            //     command = format!(
+            //         r#"["spottyconnect","start","{}"]"#,
+            //         track_id.to_base62().unwrap_or_default()
+            //     );
+            // }
+//             PlayerEvent::Stopped { track_id, .. } => {
+//                 #[cfg(debug_assertions)]
+//                 info!(
+//                     "event: stopped, track: {}",
+//                     track_id.to_base62().unwrap_or_default()
+//                 );
+//                 command = r#"["spottyconnect","stop"]"#.to_string();
+//             }
             PlayerEvent::Playing {
                 track_id,
-                duration_ms,
+                play_request_id,
                 position_ms,
                 ..
             } => {
                 #[cfg(debug_assertions)]
                 info!(
-                    "event: playing, track: {}, duration: {}, position: {}",
+                    "event: playing, track: {}, request_id: {}, position: {}",
                     track_id.to_base62().unwrap_or_default(),
-                    duration_ms,
+                    play_request_id,
                     position_ms
                 );
                 // we're not implementing the seek event here, as it's going to read player state anyway
@@ -249,7 +249,7 @@ impl LMS {
             }
             PlayerEvent::Paused {
                 track_id,
-                duration_ms,
+                play_request_id,
                 position_ms,
                 ..
             } => {
@@ -257,12 +257,12 @@ impl LMS {
                 info!(
                     "event: paused, track: {}, duration: {}, position: {}",
                     track_id.to_base62().unwrap_or_default(),
-                    duration_ms,
+                    play_request_id,
                     position_ms
                 );
                 command = r#"["spottyconnect","stop"]"#.to_string();
             }
-            PlayerEvent::VolumeSet { volume } => {
+            PlayerEvent::VolumeChanged { volume } => {
                 let mut new_volume = volume as u32;
                 if new_volume > 0 {
                     new_volume = new_volume * 100 / u32::pow(2, 16);
@@ -309,28 +309,27 @@ impl LMS {
                     auth_header = auth.trim().to_string();
                 }
 
-                let req = Request::builder()
-                    .method(Method::POST)
-                    .uri(base_url.to_string())
-                    .header("user-agent", VERSION.to_string())
-                    .header("content-type", "application/json")
-                    .header("authorization", format!("Basic {}", auth_header))
-                    .header("x-scanner", "1")
-                    .body(Body::from(json.clone()))
-                    .unwrap();
+//                 let req = Request::builder()
+//                     .method(Method::POST)
+//                     .uri(base_url.to_string())
+//                     .header("user-agent", VERSION.to_string())
+//                     .header("content-type", "application/json")
+//                     .header("authorization", format!("Basic {}", auth_header))
+//                     .header("x-scanner", "1")
+//                     .body(Body::from(json.clone()));
 
-                let client = Client::new();
-                let resp = client.request(req).await;
+//                 let client = Client::new();
+//                 let resp = client.request(req).await;
 
-                match resp {
-                    Ok(resp) => {
-                        #[cfg(debug_assertions)]
-                        info!("Response: {}", resp.status());
-                    }
-                    Err(error) => {
-                        warn!("Problem posting to {} / {}: {:?}", base_url, json, error);
-                    }
-                }
+//                 match resp {
+//                     Ok(resp) => {
+//                         #[cfg(debug_assertions)]
+//                         info!("Response: {}", resp.status());
+//                     }
+//                     Err(error) => {
+//                         warn!("Problem posting to {} / {}: {:?}", base_url, json, error);
+//                     }
+//                 }
             }
         }
     }
