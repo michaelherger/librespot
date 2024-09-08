@@ -219,14 +219,14 @@ impl LMS {
             //         track_id.to_base62().unwrap_or_default()
             //     );
             // }
-//             PlayerEvent::Stopped { track_id, .. } => {
-//                 #[cfg(debug_assertions)]
-//                 info!(
-//                     "event: stopped, track: {}",
-//                     track_id.to_base62().unwrap_or_default()
-//                 );
-//                 command = r#"["spottyconnect","stop"]"#.to_string();
-//             }
+            //             PlayerEvent::Stopped { track_id, .. } => {
+            //                 #[cfg(debug_assertions)]
+            //                 info!(
+            //                     "event: stopped, track: {}",
+            //                     track_id.to_base62().unwrap_or_default()
+            //                 );
+            //                 command = r#"["spottyconnect","stop"]"#.to_string();
+            //             }
             PlayerEvent::Playing {
                 track_id,
                 play_request_id,
@@ -309,27 +309,27 @@ impl LMS {
                     auth_header = auth.trim().to_string();
                 }
 
-//                 let req = Request::builder()
-//                     .method(Method::POST)
-//                     .uri(base_url.to_string())
-//                     .header("user-agent", VERSION.to_string())
-//                     .header("content-type", "application/json")
-//                     .header("authorization", format!("Basic {}", auth_header))
-//                     .header("x-scanner", "1")
-//                     .body(Body::from(json.clone()));
+                //                 let req = Request::builder()
+                //                     .method(Method::POST)
+                //                     .uri(base_url.to_string())
+                //                     .header("user-agent", VERSION.to_string())
+                //                     .header("content-type", "application/json")
+                //                     .header("authorization", format!("Basic {}", auth_header))
+                //                     .header("x-scanner", "1")
+                //                     .body(Body::from(json.clone()));
 
-//                 let client = Client::new();
-//                 let resp = client.request(req).await;
+                //                 let client = Client::new();
+                //                 let resp = client.request(req).await;
 
-//                 match resp {
-//                     Ok(resp) => {
-//                         #[cfg(debug_assertions)]
-//                         info!("Response: {}", resp.status());
-//                     }
-//                     Err(error) => {
-//                         warn!("Problem posting to {} / {}: {:?}", base_url, json, error);
-//                     }
-//                 }
+                //                 match resp {
+                //                     Ok(resp) => {
+                //                         #[cfg(debug_assertions)]
+                //                         info!("Response: {}", resp.status());
+                //                     }
+                //                     Err(error) => {
+                //                         warn!("Problem posting to {} / {}: {:?}", base_url, json, error);
+                //                     }
+                //                 }
             }
         }
     }

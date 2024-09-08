@@ -16,7 +16,7 @@ use sysinfo::System;
 use thiserror::Error;
 use url::Url;
 
-#[cfg(feature = "passthrough-decoder")]
+#[cfg(feature = "spotty")]
 use librespot::playback::mixer::softmixer::SoftMixer;
 
 #[allow(unused)]
@@ -37,22 +37,24 @@ use librespot::{
     },
 };
 
-#[cfg(feature = "passthrough-decoder")]
+#[cfg(feature = "spotty")]
 mod spotty;
-#[cfg(feature = "passthrough-decoder")]
+#[cfg(feature = "spotty")]
 use spotty::LMS;
 
 const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
-#[cfg(all(target_os = "windows", feature = "passthrough-decoder"))]
-const NULLDEVICE: &str = "NUL";
-#[cfg(all(not(target_os = "windows"), feature = "passthrough-decoder"))]
-const NULLDEVICE: &str = "/dev/null";
+// #[cfg(all(target_os = "windows", feature = "spotty"))]
+// const NULLDEVICE: &str = "NUL";
+// #[cfg(all(not(target_os = "windows"), feature = "spotty"))]
+// const NULLDEVICE: &str = "/dev/null";
 
 #[cfg(feature = "alsa-backend")]
 use librespot::playback::mixer::alsamixer::AlsaMixer;
 
+#[cfg(not(feature = "spotty"))]
 mod player_event_handler;
+#[cfg(not(feature = "spotty"))]
 use player_event_handler::{run_program_on_sink_events, EventHandler};
 
 fn device_id(name: &str) -> String {
@@ -98,7 +100,7 @@ fn setup_logging(quiet: bool, verbose: bool) {
     }
 }
 
-#[cfg(not(feature = "passthrough-decoder"))]
+#[cfg(not(feature = "spotty"))]
 fn list_backends() {
     println!("Available backends: ");
     for (&(name, _), idx) in BACKENDS.iter().zip(0..) {
@@ -200,7 +202,9 @@ struct Setup {
     credentials: Option<Credentials>,
     enable_discovery: bool,
     zeroconf_port: u16,
+    #[cfg(not(feature = "spotty"))]
     player_event_program: Option<String>,
+    #[cfg(not(feature = "spotty"))]
     emit_sink_events: bool,
     zeroconf_ip: Vec<std::net::IpAddr>,
     // spotty
@@ -216,7 +220,7 @@ struct Setup {
 
 fn get_setup() -> Setup {
     const VALID_INITIAL_VOLUME_RANGE: RangeInclusive<u16> = 0..=100;
-    #[cfg(not(feature = "passthrough-decoder"))]
+    #[cfg(not(feature = "spotty"))]
     const VALID_VOLUME_RANGE: RangeInclusive<f64> = 0.0..=100.0;
     const VALID_NORMALISATION_KNEE_RANGE: RangeInclusive<f64> = 0.0..=10.0;
     const VALID_NORMALISATION_PREGAIN_RANGE: RangeInclusive<f64> = -10.0..=10.0;
@@ -771,6 +775,7 @@ fn get_setup() -> Setup {
         exit(0);
     }
 
+    #[cfg(feature = "spotty")]
     if opt_present(CHECK) {
         spotty::check(get_version_string());
     }
@@ -844,9 +849,9 @@ fn get_setup() -> Setup {
         }
     }
 
-    #[cfg(not(feature = "passthrough-decoder"))]
+    #[cfg(not(feature = "spotty"))]
     let backend_name = opt_str(BACKEND);
-    #[cfg(not(feature = "passthrough-decoder"))]
+    #[cfg(not(feature = "spotty"))]
     if backend_name == Some("?".into()) {
         list_backends();
         exit(0);
@@ -870,7 +875,7 @@ fn get_setup() -> Setup {
         exit(1);
     };
 
-    #[cfg(not(feature = "passthrough-decoder"))]
+    #[cfg(not(feature = "spotty"))]
     let backend = audio_backend::find(backend_name).unwrap_or_else(|| {
         invalid_error_msg(
             BACKEND,
@@ -884,7 +889,7 @@ fn get_setup() -> Setup {
         exit(1);
     });
 
-    #[cfg(not(feature = "passthrough-decoder"))]
+    #[cfg(not(feature = "spotty"))]
     let format = opt_str(FORMAT)
         .as_deref()
         .map(|format| {
@@ -906,7 +911,7 @@ fn get_setup() -> Setup {
     let device = opt_str(DEVICE);
     if let Some(ref value) = device {
         if value == "?" {
-            #[cfg(not(feature = "passthrough-decoder"))]
+            #[cfg(not(feature = "spotty"))]
             backend(device, format);
             exit(0);
         } else if value.is_empty() {
@@ -916,10 +921,10 @@ fn get_setup() -> Setup {
 
     #[cfg(feature = "alsa-backend")]
     let mixer_type = opt_str(MIXER_TYPE);
-    #[cfg(all(not(feature = "alsa-backend"), not(feature = "passthrough-decoder")))]
+    #[cfg(all(not(feature = "alsa-backend"), not(feature = "spotty")))]
     let mixer_type: Option<String> = None;
 
-    #[cfg(not(feature = "passthrough-decoder"))]
+    #[cfg(not(feature = "spotty"))]
     let mixer = mixer::find(mixer_type.as_deref()).unwrap_or_else(|| {
         invalid_error_msg(
             MIXER_TYPE,
@@ -932,13 +937,13 @@ fn get_setup() -> Setup {
         exit(1);
     });
 
-    #[cfg(feature = "passthrough-decoder")]
+    #[cfg(feature = "spotty")]
     let mixer = mixer::find(Some(SoftMixer::NAME)).expect("Invalid mixer");
 
-    #[cfg(feature = "passthrough-decoder")]
+    #[cfg(feature = "spotty")]
     let is_alsa_mixer = false;
 
-    #[cfg(not(feature = "passthrough-decoder"))]
+    #[cfg(not(feature = "spotty"))]
     let is_alsa_mixer = match mixer_type.as_deref() {
         #[cfg(feature = "alsa-backend")]
         Some(AlsaMixer::NAME) => true,
@@ -1080,10 +1085,10 @@ fn get_setup() -> Setup {
         #[cfg(not(feature = "alsa-backend"))]
         let control = mixer_default_config.control;
 
-        #[cfg(feature = "passthrough-decoder")]
+        #[cfg(feature = "spotty")]
         let volume_ctrl = VolumeCtrl::Linear;
 
-        #[cfg(not(feature = "passthrough-decoder"))]
+        #[cfg(not(feature = "spotty"))]
         let volume_range = opt_str(VOLUME_RANGE)
             .map(|range| match range.parse::<f64>() {
                 Ok(value) if (VALID_VOLUME_RANGE).contains(&value) => value,
@@ -1122,7 +1127,7 @@ fn get_setup() -> Setup {
                 }
             });
 
-        #[cfg(not(feature = "passthrough-decoder"))]
+        #[cfg(not(feature = "spotty"))]
         let volume_ctrl = opt_str(VOLUME_CTRL)
             .as_deref()
             .map(|volume_ctrl| {
@@ -1714,12 +1719,12 @@ fn get_setup() -> Setup {
                 .unwrap_or(player_default_config.normalisation_knee_db);
         }
 
-        #[cfg(feature = "passthrough-decoder")]
+        #[cfg(feature = "spotty")]
         let ditherer = None;
 
-        #[cfg(not(feature = "passthrough-decoder"))]
+        #[cfg(not(feature = "spotty"))]
         let ditherer_name = opt_str(DITHER);
-        #[cfg(not(feature = "passthrough-decoder"))]
+        #[cfg(not(feature = "spotty"))]
         let ditherer = match ditherer_name.as_deref() {
             Some(value) => match value {
                 "none" => None,
@@ -1773,7 +1778,9 @@ fn get_setup() -> Setup {
 
     let authenticate = opt_present(AUTHENTICATE);
 
+    #[cfg(not(feature = "spotty"))]
     let player_event_program = opt_str(ONEVENT);
+    #[cfg(not(feature = "spotty"))]
     let emit_sink_events = opt_present(EMIT_SINK_EVENTS);
 
     // Spotty
@@ -1782,14 +1789,14 @@ fn get_setup() -> Setup {
         .parse::<f32>()
         .unwrap_or(0.0);
 
-        let save_token = opt_str(SAVE_TOKEN).unwrap_or_else(|| "".to_string());
-        let client_id = opt_str(CLIENT_ID).unwrap_or_else(|| include_str!("client_id.txt").to_string());
+    let save_token = opt_str(SAVE_TOKEN).unwrap_or_else(|| "".to_string());
+    let client_id = opt_str(CLIENT_ID).unwrap_or_else(|| include_str!("client_id.txt").to_string());
 
-        let lms = LMS::new(
-            opt_str(LYRION_MUSIC_SERVER),
-            opt_str(PLAYER_MAC),
-            opt_str(LMS_AUTH),
-        );
+    let lms = LMS::new(
+        opt_str(LYRION_MUSIC_SERVER),
+        opt_str(PLAYER_MAC),
+        opt_str(LMS_AUTH),
+    );
 
     Setup {
         format: AudioFormat::default(),
@@ -1804,7 +1811,9 @@ fn get_setup() -> Setup {
         credentials,
         enable_discovery,
         zeroconf_port,
+        #[cfg(not(feature = "spotty"))]
         player_event_program,
+        #[cfg(not(feature = "spotty"))]
         emit_sink_events,
         zeroconf_ip,
 
@@ -1847,6 +1856,7 @@ async fn main() {
     let mut auto_connect_times: Vec<Instant> = vec![];
     let mut discovery = None;
     let mut connecting = false;
+    #[cfg(not(feature = "spotty"))]
     let mut _event_handler: Option<EventHandler> = None;
 
     let mut session = Session::new(setup.session_config.clone(), setup.cache.clone());
@@ -1902,6 +1912,7 @@ async fn main() {
         exit(1);
     }
 
+    #[cfg(feature = "spotty")]
     if let Some(ref track_id) = setup.single_track {
         spotty::play_track(
             track_id.to_string(),
@@ -1936,6 +1947,7 @@ async fn main() {
         (backend)(device, format)
     });
 
+    #[cfg(not(feature = "spotty"))]
     if let Some(player_event_program) = setup.player_event_program.clone() {
         _event_handler = Some(EventHandler::new(
             player.get_player_event_channel(),
@@ -1984,6 +1996,7 @@ async fn main() {
                 }
             },
             // Spotty auth mode: exit after saving credentials
+            // #[cfg(feature = "spotty")]
             _ = async {}, if setup.authenticate && !connecting && last_credentials.is_some() => {
                 println!("authorized");
                 break;
