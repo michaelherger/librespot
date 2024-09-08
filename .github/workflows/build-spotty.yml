@@ -2,7 +2,7 @@ name: Build Spotty for all platforms
 
 on:
   push:
-    branches: [spotty, spotty-dev]
+    branches: [spotty]
   workflow_dispatch:
 
 env:
