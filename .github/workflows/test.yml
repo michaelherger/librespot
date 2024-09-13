@@ -38,7 +38,7 @@ on:
 env:
   RUST_BACKTRACE: 1
   KEYMASTER_CLIENT_ID: ${{ secrets.KEYMASTER_CLIENT_ID }}
-  RUSTFLAGS: -D warnings
+  RUSTFLAGS: -D warnings -A renamed-and-removed-lints
 
 # The layering here is as follows:
 #  1. code formatting
@@ -117,7 +117,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         toolchain:
-          - "1.73" # MSRV (Minimum supported rust version)
+          - "1.74" # MSRV (Minimum supported rust version)
           - stable
         experimental: [false]
         # Ignore failures in beta
@@ -162,7 +162,7 @@ jobs:
       - run: cargo hack check --each-feature
 
   test-windows:
-    needs: test-linux
+    needs: clippy
     name: cargo +${{ matrix.toolchain }} check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     continue-on-error: false
@@ -171,11 +171,15 @@ jobs:
       matrix:
         os: [windows-latest]
         toolchain:
-          - "1.73" # MSRV (Minimum supported rust version)
+          - "1.74" # MSRV (Minimum supported rust version)
           - stable
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.1.7
+
+      # hyper-rustls >=0.27 uses aws-lc as default backend which requires NASM to build
+      - name: Install NASM
+        uses: ilammy/setup-nasm@v1.5.1
 
       - name: Write Build Configuration File
         uses: DamianReeves/write-file-action@v1.0
@@ -212,7 +216,7 @@ jobs:
 
   test-cross-arm:
     name: cross +${{ matrix.toolchain }} build ${{ matrix.target }}
-    needs: test-linux
+    needs: clippy
     runs-on: ${{ matrix.os }}
     continue-on-error: false
     strategy:
@@ -221,7 +225,7 @@ jobs:
         os: [ubuntu-latest]
         target: [armv7-unknown-linux-gnueabihf]
         toolchain:
-          - "1.73" # MSRV (Minimum supported rust version)
+          - "1.74" # MSRV (Minimum supported rust version)
           - stable
     steps:
       - name: Checkout code
@@ -251,7 +255,28 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-${{ matrix.target }}-${{ steps.get-rustc-version.outputs.version }}-${{ hashFiles('Cargo.lock') }}
-      - name: Install cross
-        run: cargo install cross || true
+
+      - name: Install the cross compiler rust targets
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cross compiler
+        run: |
+            if [ ${{ matrix.target }} = "armv7-unknown-linux-gnueabihf" ]; then
+              sudo apt-get install -y gcc-arm-linux-gnueabihf
+            fi
+
+      - name: Set target link compiler
+        run: |
+            # Convert target to uppercase and replace - with _
+            target=${{ matrix.target }}
+            target=${target^^}
+            target=${target//-/_}
+            if [ ${{ matrix.target }} = "armv7-unknown-linux-gnueabihf" ]; then
+              echo "CARGO_TARGET_${target}_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
+            fi
+
       - name: Build
-        run: cross build --target ${{ matrix.target }} --no-default-features
+        run: cargo build --verbose --target ${{ matrix.target }} --no-default-features
+
+      - name: Check binary
+        run: file target/${{ matrix.target }}/debug/librespot
