@@ -19,28 +19,32 @@ message AudioFile {
         AAC_24 = 8;
         AAC_48 = 9;
         FLAC_FLAC = 16;
+        AAC_160 = 0xa;
+        AAC_320 = 0xb;
+        MP4_128 = 0xc;
+        OTHER5 = 0xd;
     }
 }
 
 message File {
     int32 bitrate = 3;
     string mime_type = 4;
-    
+
     oneof file {
         ExternalFile external_file = 1;
         FileIdFile file_id_file = 2;
     }
-    
+
     message ExternalFile {
         string method = 1;
         bytes body = 4;
-        
+
         oneof endpoint {
             string url = 2;
             string service = 3;
         }
     }
-    
+
     message FileIdFile {
         string file_id_hex = 1;
         AudioFile.Format download_format = 2;
