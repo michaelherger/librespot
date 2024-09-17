@@ -14,11 +14,6 @@ jobs:
     runs-on: macos-12
 
     steps:
-    - name: Install Rust
-      uses: crusty-pie/toolchain@v1
-      with:
-          toolchain: stable
-
     - name: Checkout
       uses: actions/checkout@v4
 
@@ -37,17 +32,13 @@ jobs:
     - name: Build
       run: |
         cargo build --release
-        strip target/release/spotty
-        cp target/release/spotty releases/spotty-x86_64
         cargo build --target=aarch64-apple-darwin --release
-        strip target/aarch64-apple-darwin/release/spotty
-        cp target/aarch64-apple-darwin/release/spotty releases/spotty-arm64
 
     - name: Build fat binary
       run: |
         lipo -create \
-          -arch x86_64 releases/spotty-x86_64 \
-          -arch arm64 releases/spotty-arm64 \
+          -arch x86_64 target/release/spotty \
+          -arch arm64 target/aarch64-apple-darwin/release/spotty \
           -output releases/spotty
 
     - name: Upload artifacts
@@ -70,13 +61,39 @@ jobs:
         contents: ${{ env.KEYMASTER_CLIENT_ID }}
         write-mode: overwrite
 
-    # - name: Build ARMv7/6/5
-    #   run: docker run --rm -v $(pwd):/source dlecan/rust-crosscompiler-arm:stable
-
-    - name: Build other binaries (x86_64, i686, ARMv8)
+    - name: Prepare build environment
       run: |
-        docker build -t spotty-cross - < docker/Dockerfile
-        docker run --rm -v $PWD/target:/build -v $PWD:/src spotty-cross
+        rustup target add x86_64-unknown-linux-musl
+        rustup target add i686-unknown-linux-musl
+        curl -L https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz | tar xvz
+        mkdir -p releases/i386-linux
+        mkdir -p releases/aarch64-linux
+        mkdir -p releases/arm-linux
+
+    - name: Build i686
+      run: |
+        cargo build --release --target=i686-unknown-linux-musl
+        cp target/i686-unknown-linux-musl/release/spotty releases/i386-linux/spotty
+
+    - name: Build x86_64
+      run: |
+        cargo build --release --target=x86_64-unknown-linux-musl
+        cp target/x86_64-unknown-linux-musl/release/spotty releases/i386-linux/spotty-x86_64
+
+    - name: Build ARMv8
+      run: |
+        ./cross build --release --target=aarch64-unknown-linux-musl
+        cp target/aarch64-unknown-linux-musl/release/spotty releases/aarch64-linux/spotty
+
+    - name: Build ARMv7 musl
+      run: |
+        ./cross build --release --target=armv7-unknown-linux-musleabihf
+        cp target/armv7-unknown-linux-musleabihf/release/spotty releases/arm-linux/spotty-muslhf
+
+    - name: Build ARM musl
+      run: |
+        ./cross build --release --target=arm-unknown-linux-musleabi
+        cp target/arm-unknown-linux-musleabi/release/spotty releases/arm-linux/spotty
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4

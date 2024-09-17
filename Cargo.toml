@@ -107,4 +107,5 @@ assets = [
 
 [profile.release]
 lto = true
-panic = 'abort'
+panic = "abort"
+strip = "symbols"
