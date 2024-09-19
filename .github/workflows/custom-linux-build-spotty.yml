@@ -18,10 +18,10 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Write Build Configuration File
-      uses: DamianReeves/write-file-action@v1.2
+      uses: DamianReeves/write-file-action@v1.3
       with:
         path: ./src/client_id.txt
         contents: ${{ env.KEYMASTER_CLIENT_ID }}
@@ -37,7 +37,7 @@ jobs:
         ./cross build --release --target=${{ github.event.inputs.target_triple }}
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: spotty-custom
         path: target/${{ github.event.inputs.target_triple }}/release/spotty
