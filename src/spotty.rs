@@ -83,7 +83,7 @@ pub async fn get_token(
                         }
                     },
                     Err(error) => {
-                        error!("Failed to create session: {:?}", error);
+                        error!("Failed to create session (get_token): {:?}", error);
                         write_response(
                             json!({
                                 "error": "Failed to create session or connect to servers."
@@ -132,7 +132,7 @@ pub async fn play_track(
 
             let session = Session::new(session_config, None);
             if let Err(error) = session.connect(last_credentials, false).await {
-                error!("Failed to create session: {:?}", error);
+                error!("Failed to create session (play_track): {:?}", error);
                 return;
             }
 
@@ -147,7 +147,7 @@ pub async fn play_track(
                     player.await_end_of_track().await;
                 }
                 Err(error) => {
-                    error!("Failed to create session: {:?}", error);
+                    error!("Failed to get track: {:?}", error);
                 }
             };
         }
