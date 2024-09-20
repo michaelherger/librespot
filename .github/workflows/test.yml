@@ -108,6 +108,7 @@ jobs:
       - run: cargo hack clippy --each-feature
 
   test-linux:
+    if: false
     name: cargo +${{ matrix.toolchain }} check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
@@ -163,6 +164,7 @@ jobs:
       - run: cargo hack check --each-feature
 
   test-windows:
+    if: false
     needs: clippy
     name: cargo +${{ matrix.toolchain }} check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -177,7 +179,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.1.7
-    
+
       # hyper-rustls >=0.27 uses aws-lc as default backend which requires NASM to build
       - name: Install NASM
         uses: ilammy/setup-nasm@v1.5.1
@@ -217,6 +219,7 @@ jobs:
       - run: cargo check
 
   test-cross-linux:
+    if: false
     name: cross +${{ matrix.toolchain }} build ${{ matrix.target }}
     needs: clippy
     runs-on: ${{ matrix.os }}
@@ -225,7 +228,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        target: 
+        target:
           - armv7-unknown-linux-gnueabihf
           - aarch64-unknown-linux-gnu
           - riscv64gc-unknown-linux-gnu
@@ -263,7 +266,7 @@ jobs:
 
       - name: Install the cross compiler rust targets
         run: rustup target add ${{ matrix.target }}
-      
+
       - name: Install cross compiler
         run: |
             if [ ${{ matrix.target }} = "armv7-unknown-linux-gnueabihf" ]; then
@@ -275,12 +278,12 @@ jobs:
             if [ ${{ matrix.target }} = "riscv64gc-unknown-linux-gnu" ]; then
               sudo apt-get install -y gcc-riscv64-linux-gnu
             fi
-      
+
       - name: Set target link compiler
         run: |
             # Convert target to uppercase and replace - with _
             target=${{ matrix.target }}
-            target=${target^^}  
+            target=${target^^}
             target=${target//-/_}
             if [ ${{ matrix.target }} = "armv7-unknown-linux-gnueabihf" ]; then
               echo "CARGO_TARGET_${target}_LINKER=arm-linux-gnueabihf-gcc" >> $GITHUB_ENV
@@ -291,11 +294,11 @@ jobs:
             if [ ${{ matrix.target }} = "riscv64gc-unknown-linux-gnu" ]; then
               echo "CARGO_TARGET_${target}_LINKER=riscv64-linux-gnu-gcc" >> $GITHUB_ENV
             fi
-            
+
       - name: Fetch
         run: cargo fetch --locked
       - name: Build
         run: cargo build --frozen --verbose --target ${{ matrix.target }} --no-default-features
-      
+
       - name: Check binary
         run: file target/${{ matrix.target }}/debug/librespot

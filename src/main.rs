@@ -39,8 +39,8 @@ use librespot::{
 
 #[cfg(feature = "spotty")]
 mod spotty;
-#[cfg(feature = "spotty")]
-use spotty::LMS;
+// #[cfg(feature = "spotty")]
+// use spotty::LMS;
 
 const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
@@ -248,7 +248,7 @@ struct Setup {
     scopes: Option<String>,
     get_token: bool,
     save_token: Option<String>,
-    lms: LMS,
+    // lms: LMS,
 }
 
 fn get_setup() -> Setup {
@@ -1875,11 +1875,11 @@ fn get_setup() -> Setup {
     let save_token = opt_str(SAVE_TOKEN).unwrap_or_else(|| "".to_string());
     let client_id = opt_str(CLIENT_ID).unwrap_or_else(|| include_str!("client_id.txt").to_string());
 
-    let lms = LMS::new(
-        opt_str(LYRION_MUSIC_SERVER),
-        opt_str(PLAYER_MAC),
-        opt_str(LMS_AUTH),
-    );
+    // let lms = LMS::new(
+    //     opt_str(LYRION_MUSIC_SERVER),
+    //     opt_str(PLAYER_MAC),
+    //     opt_str(LMS_AUTH),
+    // );
 
     Setup {
         format: AudioFormat::default(),
@@ -1918,7 +1918,7 @@ fn get_setup() -> Setup {
             Some(client_id)
         },
         scopes: opt_str(SCOPE),
-        lms,
+        // lms,
     }
 }
 
