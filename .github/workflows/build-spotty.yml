@@ -14,12 +14,6 @@ jobs:
     runs-on: macos-12
 
     steps:
-    - name: Install Rust
-      if: false
-      uses: crusty-pie/toolchain@v1
-      with:
-          toolchain: stable
-
     - name: Checkout
       uses: actions/checkout@v4
 
@@ -70,7 +64,6 @@ jobs:
     - name: Prepare build environment
       run: |
         rustup target add x86_64-unknown-linux-musl
-        rustup target add i686-unknown-linux-musl
         curl -L https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz | tar xvz
         mkdir -p releases/i386-linux
         mkdir -p releases/aarch64-linux
@@ -78,12 +71,12 @@ jobs:
 
     - name: Build i686
       run: |
-        cargo build --release --target=i686-unknown-linux-musl
+        ./cross build --release --target=i686-unknown-linux-musl
         cp target/i686-unknown-linux-musl/release/spotty releases/i386-linux/spotty
 
     - name: Build x86_64
       run: |
-        cargo build --release --target=x86_64-unknown-linux-musl
+        ./cross build --release --target=x86_64-unknown-linux-musl
         cp target/x86_64-unknown-linux-musl/release/spotty releases/i386-linux/spotty-x86_64
 
     - name: Build ARMv8

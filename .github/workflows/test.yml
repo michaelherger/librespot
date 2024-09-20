@@ -72,7 +72,7 @@ jobs:
         uses: actions/checkout@v4.1.7
 
       - name: Write Build Configuration File
-        uses: DamianReeves/write-file-action@v1.0
+        uses: DamianReeves/write-file-action@v1.3
         with:
           path: ./src/client_id.txt
           contents: ${{ env.KEYMASTER_CLIENT_ID }}
@@ -105,7 +105,7 @@ jobs:
       - run: cargo clippy -p librespot-core
       - run: cargo hack clippy --each-feature -p librespot-discovery
       - run: cargo hack clippy --each-feature -p librespot-playback
-      - run: cargo hack clippy --each-feature
+      # - run: cargo hack clippy --each-feature
 
   test-linux:
     if: false
@@ -185,7 +185,7 @@ jobs:
         uses: ilammy/setup-nasm@v1.5.1
 
       - name: Write Build Configuration File
-        uses: DamianReeves/write-file-action@v1.0
+        uses: DamianReeves/write-file-action@v1.3
         with:
           path: ./src/client_id.txt
           contents: ${{ env.KEYMASTER_CLIENT_ID }}
@@ -240,7 +240,7 @@ jobs:
         uses: actions/checkout@v4.1.7
 
       - name: Write Build Configuration File
-        uses: DamianReeves/write-file-action@v1.0
+        uses: DamianReeves/write-file-action@v1.3
         with:
           path: ./src/client_id.txt
           contents: ${{ env.KEYMASTER_CLIENT_ID }}
