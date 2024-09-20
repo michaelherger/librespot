@@ -1,0 +1,46 @@
+name: Build a Custom Spotty for a specific platform
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_triple:
+        description: 'Target Triple (see https://github.com/cross-rs/cross#supported-targets)'
+        required: true
+        default: 'arm-unknown-linux-musleabi'
+
+env:
+  CARGO_TERM_COLOR: always
+  KEYMASTER_CLIENT_ID: ${{ secrets.KEYMASTER_CLIENT_ID }}
+
+jobs:
+  Custom-Build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Write Build Configuration File
+      uses: DamianReeves/write-file-action@v1.3
+      with:
+        path: ./src/client_id.txt
+        contents: ${{ env.KEYMASTER_CLIENT_ID }}
+        write-mode: overwrite
+
+    - name: Prepare build environment
+      run: |
+        curl -L https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-musl.tar.gz | tar xvz
+        mkdir -p releases
+
+    - name: Build
+      run: |
+        ./cross build --release --target=${{ github.event.inputs.target_triple }}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: spotty-custom
+        path: target/${{ github.event.inputs.target_triple }}/release/spotty
+
+    - run: |
+        echo 'Build succeeded for `${{ github.event.inputs.target_triple }}`' >> $GITHUB_STEP_SUMMARY
