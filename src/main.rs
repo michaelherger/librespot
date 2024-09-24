@@ -39,8 +39,6 @@ use librespot::{
 
 #[cfg(feature = "spotty")]
 mod spotty;
-// #[cfg(feature = "spotty")]
-// use spotty::LMS;
 
 const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
@@ -52,8 +50,9 @@ const NULLDEVICE: &str = "/dev/null";
 #[cfg(feature = "alsa-backend")]
 use librespot::playback::mixer::alsamixer::AlsaMixer;
 
-#[cfg(not(feature = "spotty"))]
 mod player_event_handler;
+#[cfg(feature = "spotty")]
+use player_event_handler::EventHandler;
 #[cfg(not(feature = "spotty"))]
 use player_event_handler::{run_program_on_sink_events, EventHandler};
 
@@ -235,7 +234,6 @@ struct Setup {
     oauth_port: Option<u16>,
     enable_discovery: bool,
     zeroconf_port: u16,
-    #[cfg(not(feature = "spotty"))]
     player_event_program: Option<String>,
     #[cfg(not(feature = "spotty"))]
     emit_sink_events: bool,
@@ -248,7 +246,6 @@ struct Setup {
     scopes: Option<String>,
     get_token: bool,
     save_token: Option<String>,
-    // lms: LMS,
 }
 
 fn get_setup() -> Setup {
@@ -1865,11 +1862,24 @@ fn get_setup() -> Setup {
             normalisation_release_cf,
             normalisation_knee_db,
             ditherer,
+            #[cfg(feature = "spotty")]
             lms_connect_mode: !opt_present(SINGLE_TRACK),
         }
     };
 
     let authenticate = opt_present(AUTHENTICATE);
+
+    #[cfg(feature = "spotty")]
+    let player_event_program = if opt_present(LYRION_MUSIC_SERVER) && opt_present(PLAYER_MAC) {
+        Some(format!(
+            "{}|{}|{}",
+            opt_str(LYRION_MUSIC_SERVER).unwrap(),
+            opt_str(PLAYER_MAC).unwrap_or_default(),
+            opt_str(LMS_AUTH).unwrap_or_default(),
+        ))
+    } else {
+        None
+    };
 
     #[cfg(not(feature = "spotty"))]
     let player_event_program = opt_str(ONEVENT);
@@ -1884,13 +1894,6 @@ fn get_setup() -> Setup {
 
     let save_token = opt_str(SAVE_TOKEN).unwrap_or_else(|| "".to_string());
     let client_id = opt_str(CLIENT_ID).unwrap_or_else(|| include_str!("client_id.txt").to_string());
-
-    // #[cfg(feature = "spotty")]
-    // let lms = LMS::new(
-    //     opt_str(LYRION_MUSIC_SERVER),
-    //     opt_str(PLAYER_MAC),
-    //     opt_str(LMS_AUTH),
-    // );
 
     Setup {
         format,
@@ -1907,7 +1910,6 @@ fn get_setup() -> Setup {
         oauth_port,
         enable_discovery,
         zeroconf_port,
-        #[cfg(not(feature = "spotty"))]
         player_event_program,
         #[cfg(not(feature = "spotty"))]
         emit_sink_events,
@@ -1929,7 +1931,6 @@ fn get_setup() -> Setup {
             Some(client_id)
         },
         scopes: opt_str(SCOPE),
-        // lms,
     }
 }
 
@@ -1952,7 +1953,6 @@ async fn main() {
     let mut auto_connect_times: Vec<Instant> = vec![];
     let mut discovery = None;
     let mut connecting = false;
-    #[cfg(not(feature = "spotty"))]
     let mut _event_handler: Option<EventHandler> = None;
 
     let mut session = Session::new(setup.session_config.clone(), setup.cache.clone());
@@ -2061,13 +2061,13 @@ async fn main() {
         (backend)(device, format)
     });
 
-    #[cfg(not(feature = "spotty"))]
     if let Some(player_event_program) = setup.player_event_program.clone() {
         _event_handler = Some(EventHandler::new(
             player.get_player_event_channel(),
             &player_event_program,
         ));
 
+        #[cfg(not(feature = "spotty"))]
         if setup.emit_sink_events {
             player.set_sink_event_callback(Some(Box::new(move |sink_status| {
                 run_program_on_sink_events(sink_status, &player_event_program)

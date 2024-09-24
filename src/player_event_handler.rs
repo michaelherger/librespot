@@ -1,11 +1,16 @@
 use log::{debug, error, warn};
 
+#[allow(unused)]
 use std::{collections::HashMap, process::Command, thread};
 
+#[allow(unused)]
 use librespot::{
     metadata::audio::UniqueFields,
     playback::player::{PlayerEvent, PlayerEventChannel, SinkStatus},
 };
+
+#[cfg(feature = "spotty")]
+const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
 pub struct EventHandler {
     thread_handle: Option<thread::JoinHandle<()>>,
@@ -245,6 +250,10 @@ impl EventHandler {
                     }
 
                     if !env_vars.is_empty() {
+                        #[cfg(feature = "spotty")]
+                        call_lms(env_vars, &on_event);
+
+                        #[cfg(not(feature = "spotty"))]
                         run_program(env_vars, &on_event);
                     }
                 }
@@ -266,6 +275,7 @@ impl Drop for EventHandler {
     }
 }
 
+#[cfg(not(feature = "spotty"))]
 pub fn run_program_on_sink_events(sink_status: SinkStatus, onevent: &str) {
     let mut env_vars = HashMap::new();
 
@@ -282,6 +292,7 @@ pub fn run_program_on_sink_events(sink_status: SinkStatus, onevent: &str) {
     run_program(env_vars, onevent);
 }
 
+#[cfg(not(feature = "spotty"))]
 fn run_program(env_vars: HashMap<&str, String>, onevent: &str) {
     let mut v: Vec<&str> = onevent.split_whitespace().collect();
 
@@ -307,5 +318,56 @@ fn run_program(env_vars: HashMap<&str, String>, onevent: &str) {
                 }
             }
         },
+    }
+}
+
+#[cfg(feature = "spotty")]
+fn call_lms(env_vars: HashMap<&str, String>, onevent: &str) {
+    let mut params = onevent.split("|");
+
+    let host_port = params.next();
+    let player_mac = params.next();
+    let auth = params.next();
+
+    if host_port.is_some() && player_mac.is_some() {
+        debug!("Calling {:?} with variables:\n{:#?}", onevent, env_vars);
+
+        let base_url = format!("http://{}/jsonrpc.js", host_port.unwrap());
+
+        let json = format!(
+            r#"{{"id": 1,"method":"slim.request","params":["{}",["spottyconnect","event","{}"]]}}"#,
+            player_mac.unwrap(),
+            BASE64_STANDARD.encode(format!("{:?}", env_vars).as_bytes())
+        );
+
+        use bytes::Bytes;
+        use http_body_util::Full;
+
+        use base64::prelude::*;
+        use hyper::Request;
+        use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+        use tokio::runtime::Runtime;
+
+        let req: Request<Full<Bytes>> = Request::builder()
+            .method("POST")
+            .uri(base_url.to_string())
+            .header("user-agent", VERSION.to_string())
+            .header("content-type", "application/json")
+            .header(
+                "authorization",
+                format!("Basic {}", format!("Basic {}", auth.unwrap_or(""))),
+            )
+            .header("x-scanner", "1")
+            .body(Full::from(json))
+            .expect("Signal Spotty Event");
+
+        let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
+
+        let rt = Runtime::new().unwrap();
+        rt.block_on(async move {
+            let _ = client.request(req).await;
+        });
+    } else {
+        eprint!("missing LMS connection params");
     }
 }
