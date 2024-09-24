@@ -140,6 +140,7 @@ pub struct PlayerConfig {
     // (thereby circumventing Send bounds that they might not satisfy)
     pub ditherer: Option<DithererBuilder>,
 
+    #[cfg(feature = "spotty")]
     pub lms_connect_mode: bool,
 }
 
@@ -158,6 +159,8 @@ impl Default for PlayerConfig {
             normalisation_knee_db: 5.0,
             passthrough: false,
             ditherer: Some(mk_ditherer::<TriangularDitherer>),
+
+            #[cfg(feature = "spotty")]
             lms_connect_mode: false,
         }
     }

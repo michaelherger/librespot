@@ -65,5 +65,7 @@ rodio-backend = ["rodio", "cpal"]
 rodiojack-backend = ["rodio", "cpal/jack"]
 sdl-backend = ["sdl2"]
 gstreamer-backend = ["gstreamer", "gstreamer-app", "gstreamer-audio", "glib"]
+spotty = []
 
 passthrough-decoder = ["ogg"]
+default = ["passthrough-decoder", "spotty"]

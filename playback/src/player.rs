@@ -1662,14 +1662,22 @@ impl PlayerInternal {
                         }
                     }
 
+                    #[cfg(feature = "spotty")]
                     if let Err(_e) = self.sink.write(packet, &mut self.converter) {
                         // error!("{}", e);
                         exit(1);
+                    }
+
+                    #[cfg(not(feature = "spotty"))]
+                    if let Err(e) = self.sink.write(packet, &mut self.converter) {
+                        error!("{}", e);
+                        self.handle_pause();
                     }
                 }
             }
 
             None => {
+                #[cfg(feature = "spotty")]
                 if self.config.lms_connect_mode {
                     // info!("In LMS Connect mode - ignore end of track");
 

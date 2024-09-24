@@ -8,6 +8,16 @@ use std::io::{self, Write};
 use std::process::exit;
 use thiserror::Error;
 
+#[cfg(feature = "spotty")]
+use std::thread;
+#[cfg(feature = "spotty")]
+use std::time::Duration;
+
+#[cfg(all(target_os = "windows", feature = "spotty"))]
+const NULLDEVICE: &str = "NUL";
+#[cfg(all(not(target_os = "windows"), feature = "spotty"))]
+const NULLDEVICE: &str = "/dev/null";
+
 #[derive(Debug, Error)]
 enum StdoutError {
     #[error("<StdoutSink> {0}")]
@@ -100,6 +110,19 @@ impl SinkAsBytes for StdoutSink {
             .ok_or(StdoutError::NoOutput)?
             .write_all(data)
             .map_err(StdoutError::OnWrite)?;
+
+        #[cfg(feature = "spotty")]
+        match self.file.clone().as_deref() {
+            Some(NULLDEVICE) => {
+                // can we sleep for the duration of the "data" packets?
+                let ms: u64 = ((data.len() * 8 * 1000) / (1411 * 1024))
+                    .try_into()
+                    .unwrap();
+                eprintln!("NullSink::write_bytes: {:?} - {:?}", data.len(), ms);
+                thread::sleep(Duration::from_millis(ms));
+            }
+            _ => {}
+        }
 
         Ok(())
     }

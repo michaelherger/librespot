@@ -117,7 +117,9 @@ use self::sdl::SdlSink;
 mod pipe;
 use self::pipe::StdoutSink;
 
+#[cfg(not(feature = "spotty"))]
 mod subprocess;
+#[cfg(not(feature = "spotty"))]
 use self::subprocess::SubprocessSink;
 
 pub const BACKENDS: &[(&str, SinkBuilder)] = &[
@@ -138,6 +140,7 @@ pub const BACKENDS: &[(&str, SinkBuilder)] = &[
     #[cfg(feature = "sdl-backend")]
     (SdlSink::NAME, mk_sink::<SdlSink>),
     (StdoutSink::NAME, mk_sink::<StdoutSink>),
+    #[cfg(not(feature = "spotty"))]
     (SubprocessSink::NAME, mk_sink::<SubprocessSink>),
 ];
 

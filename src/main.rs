@@ -44,10 +44,10 @@ mod spotty;
 
 const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
 
-// #[cfg(all(target_os = "windows", feature = "spotty"))]
-// const NULLDEVICE: &str = "NUL";
-// #[cfg(all(not(target_os = "windows"), feature = "spotty"))]
-// const NULLDEVICE: &str = "/dev/null";
+#[cfg(all(target_os = "windows", feature = "spotty"))]
+const NULLDEVICE: &str = "NUL";
+#[cfg(all(not(target_os = "windows"), feature = "spotty"))]
+const NULLDEVICE: &str = "/dev/null";
 
 #[cfg(feature = "alsa-backend")]
 use librespot::playback::mixer::alsamixer::AlsaMixer;
@@ -956,6 +956,9 @@ fn get_setup() -> Setup {
         exit(1);
     });
 
+    #[cfg(feature = "spotty")]
+    let backend = audio_backend::find(None).unwrap();
+
     #[cfg(not(feature = "spotty"))]
     let format = opt_str(FORMAT)
         .as_deref()
@@ -975,6 +978,13 @@ fn get_setup() -> Setup {
         })
         .unwrap_or_default();
 
+    #[cfg(feature = "spotty")]
+    let format = AudioFormat::default();
+
+    #[cfg(feature = "spotty")]
+    let device = Some(NULLDEVICE.to_string());
+
+    #[cfg(not(feature = "spotty"))]
     let device = opt_str(DEVICE);
     if let Some(ref value) = device {
         if value == "?" {
@@ -1875,6 +1885,7 @@ fn get_setup() -> Setup {
     let save_token = opt_str(SAVE_TOKEN).unwrap_or_else(|| "".to_string());
     let client_id = opt_str(CLIENT_ID).unwrap_or_else(|| include_str!("client_id.txt").to_string());
 
+    // #[cfg(feature = "spotty")]
     // let lms = LMS::new(
     //     opt_str(LYRION_MUSIC_SERVER),
     //     opt_str(PLAYER_MAC),
@@ -1882,8 +1893,8 @@ fn get_setup() -> Setup {
     // );
 
     Setup {
-        format: AudioFormat::default(),
-        backend: audio_backend::find(None).unwrap(),
+        format,
+        backend,
         device,
         mixer,
         cache,
