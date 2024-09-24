@@ -112,16 +112,13 @@ impl SinkAsBytes for StdoutSink {
             .map_err(StdoutError::OnWrite)?;
 
         #[cfg(feature = "spotty")]
-        match self.file.clone().as_deref() {
-            Some(NULLDEVICE) => {
-                // can we sleep for the duration of the "data" packets?
-                let ms: u64 = ((data.len() * 8 * 1000) / (1411 * 1024))
-                    .try_into()
-                    .unwrap();
-                eprintln!("NullSink::write_bytes: {:?} - {:?}", data.len(), ms);
-                thread::sleep(Duration::from_millis(ms));
-            }
-            _ => {}
+        if let Some(NULLDEVICE) = self.file.clone().as_deref() {
+            // can we sleep for the duration of the "data" packets?
+            let ms: u64 = ((data.len() * 8 * 1000) / (1411 * 1024))
+                .try_into()
+                .unwrap();
+            // eprintln!("NullSink::write_bytes: {:?} - {:?}", data.len(), ms);
+            thread::sleep(Duration::from_millis(ms));
         }
 
         Ok(())
