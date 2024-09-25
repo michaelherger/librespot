@@ -23,6 +23,11 @@ impl FromStr for Bitrate {
 }
 
 impl Default for Bitrate {
+    #[cfg(feature = "spotty")]
+    fn default() -> Self {
+        Self::Bitrate96
+    }
+    #[cfg(not(feature = "spotty"))]
     fn default() -> Self {
         Self::Bitrate160
     }

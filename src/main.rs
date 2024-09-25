@@ -189,6 +189,7 @@ fn get_version_string() -> String {
 }
 
 /// Spotify's Desktop app uses these. Some of these are only available when requested with Spotify's client IDs.
+#[cfg(not(feature = "spotty"))]
 static OAUTH_SCOPES: &[&str] = &[
     //const OAUTH_SCOPES: Vec<&str> = vec![
     "app-remote-control",
@@ -230,7 +231,9 @@ struct Setup {
     connect_config: ConnectConfig,
     mixer_config: MixerConfig,
     credentials: Option<Credentials>,
+    #[cfg(not(feature = "spotty"))]
     enable_oauth: bool,
+    #[cfg(not(feature = "spotty"))]
     oauth_port: Option<u16>,
     enable_discovery: bool,
     zeroconf_port: u16,
@@ -1250,6 +1253,16 @@ fn get_setup() -> Setup {
         let audio_dir = if opt_present(DISABLE_AUDIO_CACHE) {
             None
         } else {
+            #[cfg(feature = "spotty")]
+            if !opt_present(SINGLE_TRACK) {
+                None
+            } else {
+                opt_str(CACHE)
+                    .as_ref()
+                    .map(|p| AsRef::<Path>::as_ref(p).join("files"))
+            }
+
+            #[cfg(not(feature = "spotty"))]
             opt_str(CACHE)
                 .as_ref()
                 .map(|p| AsRef::<Path>::as_ref(p).join("files"))
@@ -1292,6 +1305,9 @@ fn get_setup() -> Setup {
         }
     };
 
+    #[cfg(feature = "spotty")]
+    let enable_oauth = false;
+    #[cfg(not(feature = "spotty"))]
     let enable_oauth = opt_present(ENABLE_OAUTH);
 
     let credentials = {
@@ -1339,6 +1355,7 @@ fn get_setup() -> Setup {
         exit(1);
     }
 
+    #[cfg(not(feature = "spotty"))]
     let oauth_port = if opt_present(OAUTH_PORT) {
         if !enable_oauth {
             warn!(
@@ -1906,7 +1923,9 @@ fn get_setup() -> Setup {
         connect_config,
         mixer_config,
         credentials,
+        #[cfg(not(feature = "spotty"))]
         enable_oauth,
+        #[cfg(not(feature = "spotty"))]
         oauth_port,
         enable_discovery,
         zeroconf_port,
@@ -1998,6 +2017,18 @@ async fn main() {
         };
     }
 
+    #[cfg(feature = "spotty")]
+    if let Some(credentials) = setup.credentials {
+        last_credentials = Some(credentials);
+        connecting = true;
+    } else if discovery.is_none() {
+        error!(
+            "Discovery is unavailable and no credentials provided. Authentication is not possible."
+        );
+        exit(1);
+    }
+
+    #[cfg(not(feature = "spotty"))]
     if let Some(credentials) = setup.credentials {
         last_credentials = Some(credentials);
         connecting = true;
