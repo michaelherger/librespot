@@ -2064,7 +2064,7 @@ async fn main() {
             setup.start_position,
             last_credentials,
             setup.player_config,
-            setup.session_config,
+            session,
         )
         .await;
         exit(0);
@@ -2074,7 +2074,7 @@ async fn main() {
             setup.scopes,
             setup.save_token,
             last_credentials,
-            setup.session_config,
+            session,
         )
         .await;
         exit(0);

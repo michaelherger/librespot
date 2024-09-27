@@ -6,7 +6,6 @@ use std::fs;
 use std::process::exit;
 
 use librespot::core::authentication::Credentials;
-use librespot::core::config::SessionConfig;
 use librespot::core::session::Session;
 use librespot::core::spotify_id::SpotifyId;
 
@@ -49,13 +48,12 @@ pub async fn get_token(
     scopes: Option<String>,
     save_token: Option<String>,
     last_credentials: Option<Credentials>,
-    session_config: SessionConfig,
+    session: Session,
 ) {
     match last_credentials {
         Some(last_credentials) => {
             if let Some(client_id) = client_id {
                 let scopes = scopes.unwrap_or_else(|| SCOPES.to_string());
-                let session = Session::new(session_config, None);
                 session.set_client_id(client_id.as_str());
 
                 match session.connect(last_credentials, true).await {
@@ -113,7 +111,7 @@ pub async fn play_track(
     start_position: u32,
     last_credentials: Option<Credentials>,
     player_config: PlayerConfig,
-    session_config: SessionConfig,
+    session: Session,
 ) {
     match last_credentials {
         Some(last_credentials) => {
@@ -127,7 +125,6 @@ pub async fn play_track(
                     .as_str(),
             );
 
-            let session = Session::new(session_config, None);
             if let Err(error) = session.connect(last_credentials, false).await {
                 error!("Failed to create session (play_track): {:?}", error);
                 return;
