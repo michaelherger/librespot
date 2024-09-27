@@ -323,6 +323,12 @@ fn run_program(env_vars: HashMap<&str, String>, onevent: &str) {
 
 #[cfg(feature = "spotty")]
 fn call_lms(env_vars: HashMap<&str, String>, onevent: &str) {
+    // don't send noisy position correction
+    if env_vars.get("PLAYER_EVENT") == Some(&"position_correction".to_string()) {
+        debug!("Ignoring {:?} event", env_vars.get("PLAYER_EVENT").unwrap());
+        return;
+    }
+
     let mut params = onevent.split("|");
 
     let host_port = params.next();
@@ -368,6 +374,6 @@ fn call_lms(env_vars: HashMap<&str, String>, onevent: &str) {
             let _ = client.request(req).await;
         });
     } else {
-        eprint!("missing LMS connection params");
+        error!("missing LMS connection params");
     }
 }
