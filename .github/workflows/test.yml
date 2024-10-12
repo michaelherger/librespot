@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4.1.7
+        uses: actions/checkout@v4.2.1
       - name: Install toolchain
         run: curl https://sh.rustup.rs -sSf | sh -s -- --profile default --default-toolchain stable  -y
       - run: cargo fmt --all -- --check
@@ -69,7 +69,7 @@ jobs:
         toolchain: [stable]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4.1.7
+        uses: actions/checkout@v4.2.1
 
       - name: Write Build Configuration File
         uses: DamianReeves/write-file-action@v1.3
@@ -87,7 +87,7 @@ jobs:
         shell: bash
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4.0.2
+        uses: actions/cache@v4.1.1
         with:
           path: |
             ~/.cargo/registry/index
@@ -128,7 +128,7 @@ jobs:
             experimental: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4.1.7
+        uses: actions/checkout@v4.2.1
 
       - name: Install toolchain
         run: curl https://sh.rustup.rs -sSf | sh -s -- --profile minimal --default-toolchain ${{ matrix.toolchain }}  -y
@@ -139,7 +139,7 @@ jobs:
         shell: bash
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4.0.2
+        uses: actions/cache@v4.1.1
         with:
           path: |
             ~/.cargo/registry/index
@@ -178,7 +178,7 @@ jobs:
           - stable
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4.1.7
+        uses: actions/checkout@v4.2.1
 
       # hyper-rustls >=0.27 uses aws-lc as default backend which requires NASM to build
       - name: Install NASM
@@ -200,7 +200,7 @@ jobs:
         shell: bash
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4.0.2
+        uses: actions/cache@v4.1.1
         with:
           path: |
             ~/.cargo/registry/index
@@ -237,7 +237,7 @@ jobs:
           - stable
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4.1.7
+        uses: actions/checkout@v4.2.1
 
       - name: Write Build Configuration File
         uses: DamianReeves/write-file-action@v1.3
@@ -255,7 +255,7 @@ jobs:
         shell: bash
 
       - name: Cache Rust dependencies
-        uses: actions/cache@v4.0.2
+        uses: actions/cache@v4.1.1
         with:
           path: |
             ~/.cargo/registry/index
