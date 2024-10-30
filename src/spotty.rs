@@ -29,6 +29,7 @@ pub fn check(version_info: String) {
         "debug": DEBUGMODE,
         "lms-auth": true,
         "no-ap-port": true,
+        "oauth": true,
         "ogg-direct": true,
         "podcasts": true,
         "save-token": true,
