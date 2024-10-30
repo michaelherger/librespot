@@ -337,6 +337,9 @@ impl Spirc {
                 }),
         );
 
+        // pre-acquire client_token, preventing multiple request while running
+        let _ = session.spclient().client_token().await?;
+
         // Connect *after* all message listeners are registered
         session.connect(credentials, true).await?;
 
@@ -490,7 +493,22 @@ impl SpircTask {
                 },
                 connection_id_update = self.connection_id_update.next() => match connection_id_update {
                     Some(result) => match result {
-                        Ok(connection_id) => self.handle_connection_id_update(connection_id),
+                        Ok(connection_id) => {
+                            self.handle_connection_id_update(connection_id);
+
+                            // pre-acquire access_token, preventing multiple request while running
+                            // pre-acquiring for the access_token will only last for one hour
+                            //
+                            // we need to fire the request after connecting, but can't do it right
+                            // after, because by that we would miss certain packages, like this one
+                            match self.session.login5().auth_token().await {
+                                Ok(_) => debug!("successfully pre-acquire access_token and client_token"),
+                                Err(why) => {
+                                    error!("{why}");
+                                    break
+                                }
+                            }
+                        },
                         Err(e) => error!("could not parse connection ID update: {}", e),
                     }
                     None => {
@@ -1509,7 +1527,7 @@ impl SpircTask {
     fn set_volume(&mut self, volume: u16) {
         let old_volume = self.device.volume();
         let new_volume = volume as u32;
-        if old_volume != new_volume {
+        if old_volume != new_volume || self.mixer.volume() != volume {
             self.device.set_volume(new_volume);
             self.mixer.set_volume(volume);
             if let Some(cache) = self.session.cache() {
