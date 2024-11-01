@@ -89,7 +89,7 @@ with-libmdns = ["librespot-discovery/with-libmdns"]
 passthrough-decoder = ["librespot-playback/passthrough-decoder"]
 spotty = []
 
-default = ["passthrough-decoder", "spotty", "with-libmdns"]
+default = ["passthrough-decoder", "spotty", "with-dns-sd"]
 
 [package.metadata.deb]
 maintainer = "librespot-org"
