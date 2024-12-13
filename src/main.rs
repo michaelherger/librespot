@@ -1,7 +1,3 @@
-use data_encoding::HEXLOWER;
-use futures_util::StreamExt;
-use log::{debug, error, info, trace, warn};
-use sha1::{Digest, Sha1};
 use std::{
     env,
     fs::create_dir_all,
@@ -12,16 +8,17 @@ use std::{
     str::FromStr,
     time::{Duration, Instant},
 };
-use sysinfo::{ProcessesToUpdate, System};
-use thiserror::Error;
-use url::Url;
 
 #[cfg(feature = "spotty")]
 use librespot::playback::mixer::softmixer::SoftMixer;
 
+use data_encoding::HEXLOWER;
+use futures_util::StreamExt;
+#[cfg(feature = "alsa-backend")]
+use librespot::playback::mixer::alsamixer::AlsaMixer;
 #[allow(unused)]
 use librespot::{
-    connect::{config::ConnectConfig, spirc::Spirc},
+    connect::{spirc::Spirc, state::ConnectStateConfig},
     core::{
         authentication::Credentials, cache::Cache, config::DeviceType, version, Session,
         SessionConfig,
@@ -48,8 +45,11 @@ const NULLDEVICE: &str = "NUL";
 #[cfg(all(not(target_os = "windows"), feature = "spotty"))]
 const NULLDEVICE: &str = "/dev/null";
 
-#[cfg(feature = "alsa-backend")]
-use librespot::playback::mixer::alsamixer::AlsaMixer;
+use log::{debug, error, info, trace, warn};
+use sha1::{Digest, Sha1};
+use sysinfo::{ProcessesToUpdate, System};
+use thiserror::Error;
+use url::Url;
 
 mod player_event_handler;
 #[cfg(feature = "spotty")]
@@ -229,7 +229,7 @@ struct Setup {
     cache: Option<Cache>,
     player_config: PlayerConfig,
     session_config: SessionConfig,
-    connect_config: ConnectConfig,
+    connect_config: ConnectStateConfig,
     mixer_config: MixerConfig,
     credentials: Option<Credentials>,
     #[cfg(not(feature = "spotty"))]
@@ -1536,7 +1536,7 @@ fn get_setup() -> Setup {
     });
 
     let connect_config = {
-        let connect_default_config = ConnectConfig::default();
+        let connect_default_config = ConnectStateConfig::default();
 
         let name = opt_str(NAME).unwrap_or_else(|| connect_default_config.name.clone());
 
@@ -1596,14 +1596,11 @@ fn get_setup() -> Setup {
                         #[cfg(feature = "alsa-backend")]
                         let default_value = &format!(
                             "{}, or the current value when the alsa mixer is used.",
-                            connect_default_config.initial_volume.unwrap_or_default()
+                            connect_default_config.initial_volume
                         );
 
                         #[cfg(not(feature = "alsa-backend"))]
-                        let default_value = &connect_default_config
-                            .initial_volume
-                            .unwrap_or_default()
-                            .to_string();
+                        let default_value = &connect_default_config.initial_volume.to_string();
 
                         invalid_error_msg(
                             INITIAL_VOLUME,
@@ -1650,14 +1647,21 @@ fn get_setup() -> Setup {
 
         let is_group = opt_present(DEVICE_IS_GROUP);
 
-        let has_volume_ctrl = !matches!(mixer_config.volume_ctrl, VolumeCtrl::Fixed);
-
-        ConnectConfig {
-            name,
-            device_type,
-            is_group,
-            initial_volume,
-            has_volume_ctrl,
+        if let Some(initial_volume) = initial_volume {
+            ConnectStateConfig {
+                name,
+                device_type,
+                is_group,
+                initial_volume: initial_volume.into(),
+                ..Default::default()
+            }
+        } else {
+            ConnectStateConfig {
+                name,
+                device_type,
+                is_group,
+                ..Default::default()
+            }
         }
     };
 

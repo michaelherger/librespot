@@ -111,7 +111,6 @@ where
     thread_rng().fill_bytes(&mut client_nonce);
 
     let platform = match crate::config::OS {
-        "android" => Platform::PLATFORM_ANDROID_ARM,
         "freebsd" | "netbsd" | "openbsd" => match ARCH {
             "x86_64" => Platform::PLATFORM_FREEBSD_X86_64,
             _ => Platform::PLATFORM_FREEBSD_X86,
@@ -120,7 +119,12 @@ where
             "aarch64" => Platform::PLATFORM_IPHONE_ARM64,
             _ => Platform::PLATFORM_IPHONE_ARM,
         },
-        "linux" => match ARCH {
+        // Rather than sending `Platform::PLATFORM_ANDROID_ARM` for "android",
+        // we are spoofing "android" as "linux", as otherwise during Session::connect
+        // all APs will reject the client with TryAnotherAP, no matter the credentials
+        // used was obtained via OAuth using KEYMASTER or ANDROID's client ID or
+        // Login5Manager::login
+        "linux" | "android" => match ARCH {
             "arm" | "aarch64" => Platform::PLATFORM_LINUX_ARM,
             "blackfin" => Platform::PLATFORM_LINUX_BLACKFIN,
             "mips" => Platform::PLATFORM_LINUX_MIPS,
@@ -229,8 +233,8 @@ where
     Ok(message)
 }
 
-async fn read_into_accumulator<'a, 'b, T: AsyncRead + Unpin>(
-    connection: &'a mut T,
+async fn read_into_accumulator<'b, T: AsyncRead + Unpin>(
+    connection: &mut T,
     size: usize,
     acc: &'b mut Vec<u8>,
 ) -> io::Result<&'b mut [u8]> {
