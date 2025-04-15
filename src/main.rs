@@ -18,7 +18,7 @@ use futures_util::StreamExt;
 use librespot::playback::mixer::alsamixer::AlsaMixer;
 #[allow(unused)]
 use librespot::{
-    connect::{spirc::Spirc, state::ConnectStateConfig},
+    connect::{ConnectConfig, Spirc},
     core::{
         authentication::Credentials, cache::Cache, config::DeviceType, version, Session,
         SessionConfig,
@@ -45,6 +45,8 @@ const NULLDEVICE: &str = "NUL";
 #[cfg(all(not(target_os = "windows"), feature = "spotty"))]
 const NULLDEVICE: &str = "/dev/null";
 
+#[cfg(not(feature = "spotty"))]
+use librespot_oauth::OAuthClientBuilder;
 use log::{debug, error, info, trace, warn};
 use sha1::{Digest, Sha1};
 use sysinfo::{ProcessesToUpdate, System};
@@ -229,7 +231,7 @@ struct Setup {
     cache: Option<Cache>,
     player_config: PlayerConfig,
     session_config: SessionConfig,
-    connect_config: ConnectStateConfig,
+    connect_config: ConnectConfig,
     mixer_config: MixerConfig,
     credentials: Option<Credentials>,
     #[cfg(not(feature = "spotty"))]
@@ -1536,7 +1538,7 @@ fn get_setup() -> Setup {
     });
 
     let connect_config = {
-        let connect_default_config = ConnectStateConfig::default();
+        let connect_default_config = ConnectConfig::default();
 
         let name = opt_str(NAME).unwrap_or_else(|| connect_default_config.name.clone());
 
@@ -1636,7 +1638,7 @@ fn get_setup() -> Setup {
                         speaker, tv, avr, stb, audiodongle, \
                         gameconsole, castaudio, castvideo, \
                         automobile, smartwatch, chromebook, \
-                        carthing, homething",
+                        carthing",
                         DeviceType::default().into(),
                     );
 
@@ -1648,15 +1650,15 @@ fn get_setup() -> Setup {
         let is_group = opt_present(DEVICE_IS_GROUP);
 
         if let Some(initial_volume) = initial_volume {
-            ConnectStateConfig {
+            ConnectConfig {
                 name,
                 device_type,
                 is_group,
-                initial_volume: initial_volume.into(),
+                initial_volume,
                 ..Default::default()
             }
         } else {
-            ConnectStateConfig {
+            ConnectConfig {
                 name,
                 device_type,
                 is_group,
@@ -2090,7 +2092,7 @@ async fn main() {
             {
                 Ok(d) => break Some(d),
                 Err(e) => {
-                    sys.refresh_processes(ProcessesToUpdate::All);
+                    sys.refresh_processes(ProcessesToUpdate::All, true);
 
                     if System::uptime() <= 1 {
                         debug!("Retrying to initialise discovery: {e}");
@@ -2125,18 +2127,22 @@ async fn main() {
             Some(port) => format!(":{port}"),
             _ => String::new(),
         };
-        let access_token = match librespot::oauth::get_access_token(
+        let client = OAuthClientBuilder::new(
             &setup.session_config.client_id,
             &format!("http://127.0.0.1{port_str}/login"),
             OAUTH_SCOPES.to_vec(),
-        ) {
-            Ok(token) => token.access_token,
-            Err(e) => {
-                error!("Failed to get Spotify access token: {e}");
-                exit(1);
-            }
-        };
-        last_credentials = Some(Credentials::with_access_token(access_token));
+        )
+        .open_in_browser()
+        .build()
+        .unwrap_or_else(|e| {
+            error!("Failed to create OAuth client: {e}");
+            exit(1);
+        });
+        let oauth_token = client.get_access_token().unwrap_or_else(|e| {
+            error!("Failed to get Spotify access token: {e}");
+            exit(1);
+        });
+        last_credentials = Some(Credentials::with_access_token(oauth_token.access_token));
         connecting = true;
     } else if discovery.is_none() {
         error!(

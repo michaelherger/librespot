@@ -118,7 +118,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         toolchain:
-          - "1.75" # MSRV (Minimum supported rust version)
+          - "1.81" # MSRV (Minimum supported rust version)
           - stable
         experimental: [false]
         # Ignore failures in beta
@@ -174,7 +174,7 @@ jobs:
       matrix:
         os: [windows-latest]
         toolchain:
-          - "1.75" # MSRV (Minimum supported rust version)
+          - "1.81" # MSRV (Minimum supported rust version)
           - stable
     steps:
       - name: Checkout code
@@ -233,7 +233,7 @@ jobs:
           - aarch64-unknown-linux-gnu
           - riscv64gc-unknown-linux-gnu
         toolchain:
-          - "1.75" # MSRV (Minimum supported rust version)
+          - "1.81" # MSRV (Minimum supported rust version)
           - stable
     steps:
       - name: Checkout code
@@ -266,6 +266,12 @@ jobs:
 
       - name: Install the cross compiler rust targets
         run: rustup target add ${{ matrix.target }}
+
+      - name: Update and Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake libclang1
+
+      - name: Install bindgen-cli
+        run: cargo install --force --locked bindgen-cli
 
       - name: Install cross compiler
         run: |

@@ -10,12 +10,13 @@ use crate::{
     config::SessionConfig,
     error::ErrorKind,
     protocol::{
-        canvaz::EntityCanvazRequest,
+        autoplay_context_request::AutoplayContextRequest,
         clienttoken_http::{
             ChallengeAnswer, ChallengeType, ClientTokenRequest, ClientTokenRequestType,
             ClientTokenResponse, ClientTokenResponseType,
         },
         connect::PutStateRequest,
+        context::Context,
         extended_metadata::BatchedEntityRequest,
     },
     token::Token,
@@ -32,7 +33,6 @@ use hyper::{
     HeaderMap, Method, Request,
 };
 use hyper_util::client::legacy::ResponseFuture;
-use librespot_protocol::{autoplay_context_request::AutoplayContextRequest, player::Context};
 use protobuf::{Enum, Message, MessageFull};
 use rand::RngCore;
 use sysinfo::System;
@@ -716,13 +716,6 @@ impl SpClient {
     // TODO: Seen-in-the-wild but unimplemented endpoints
     // - /presence-view/v1/buddylist
 
-    // TODO: Find endpoint for newer canvas.proto and upgrade to that.
-    pub async fn get_canvases(&self, request: EntityCanvazRequest) -> SpClientResult {
-        let endpoint = "/canvaz-cache/v0/canvases";
-        self.request_with_protobuf(&Method::POST, endpoint, None, &request)
-            .await
-    }
-
     pub async fn get_extended_metadata(&self, request: BatchedEntityRequest) -> SpClientResult {
         let endpoint = "/extended-metadata/v0/extended-metadata";
         self.request_with_protobuf(&Method::POST, endpoint, None, &request)
@@ -811,20 +804,27 @@ impl SpClient {
 
     /// Request the context for an uri
     ///
-    /// ## Query entry found in the wild:
+    /// All [SpotifyId] uris are supported in addition to the following special uris:
+    /// - liked songs:
+    ///   - all: `spotify:user:<user_id>:collection`
+    ///   - of artist: `spotify:user:<user_id>:collection:artist:<artist_id>`
+    /// - search: `spotify:search:<search+query>` (whitespaces are replaced with `+`)
+    ///
+    /// ## Query params found in the wild:
     /// - include_video=true
-    /// ## Remarks:
-    /// - track
+    ///
+    /// ## Known results of uri types:
+    /// - uris of type `track`
     ///   - returns a single page with a single track
     ///   - when requesting a single track with a query in the request, the returned track uri
     ///     **will** contain the query
-    /// - artists
+    /// - uris of type `artist`
     ///   - returns 2 pages with tracks: 10 most popular tracks and latest/popular album
-    ///   - remaining pages are albums of the artists and are only provided as page_url
-    /// - search
+    ///   - remaining pages are artist albums sorted by popularity (only provided as page_url)
+    /// - uris of type `search`
     ///   - is massively influenced by the provided query
     ///   - the query result shown by the search expects no query at all
-    ///   - uri looks like "spotify:search:never+gonna"
+    ///   - uri looks like `spotify:search:never+gonna`
     pub async fn get_context(&self, uri: &str) -> Result<Context, Error> {
         let uri = format!("/context-resolve/v1/{uri}");
 

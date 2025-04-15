@@ -1,9 +1,13 @@
-use crate::state::context::ContextType;
-use crate::state::metadata::Metadata;
-use crate::state::provider::{IsProvider, Provider};
-use crate::state::{ConnectState, StateError};
-use librespot_core::Error;
-use librespot_protocol::player::{ProvidedTrack, TransferState};
+use crate::{
+    core::Error,
+    protocol::{player::ProvidedTrack, transfer_state::TransferState},
+    state::{
+        context::ContextType,
+        metadata::Metadata,
+        provider::{IsProvider, Provider},
+        {ConnectState, StateError},
+    },
+};
 use protobuf::MessageField;
 
 impl ConnectState {
@@ -11,7 +15,7 @@ impl ConnectState {
         &self,
         transfer: &TransferState,
     ) -> Result<ProvidedTrack, Error> {
-        let track = if transfer.queue.is_playing_queue {
+        let track = if transfer.queue.is_playing_queue.unwrap_or_default() {
             transfer.queue.tracks.first()
         } else {
             transfer.playback.current_track.as_ref()
@@ -20,8 +24,14 @@ impl ConnectState {
 
         self.context_to_provided_track(
             track,
-            Some(&transfer.current_session.context.uri),
-            transfer.queue.is_playing_queue.then_some(Provider::Queue),
+            transfer.current_session.context.uri.as_deref(),
+            None,
+            None,
+            transfer
+                .queue
+                .is_playing_queue
+                .unwrap_or_default()
+                .then_some(Provider::Queue),
         )
     }
 
@@ -33,23 +43,37 @@ impl ConnectState {
         player.is_buffering = false;
 
         if let Some(options) = transfer.options.take() {
-            player.options = MessageField::some(options);
+            player.options = MessageField::some(options.into());
         }
-        player.is_paused = transfer.playback.is_paused;
-        player.is_playing = !transfer.playback.is_paused;
+        player.is_paused = transfer.playback.is_paused.unwrap_or_default();
+        player.is_playing = !player.is_paused;
 
-        if transfer.playback.playback_speed != 0. {
-            player.playback_speed = transfer.playback.playback_speed
-        } else {
-            player.playback_speed = 1.;
+        match transfer.playback.playback_speed {
+            Some(speed) if speed != 0. => player.playback_speed = speed,
+            _ => player.playback_speed = 1.,
         }
 
+        let mut shuffle_seed = None;
         if let Some(session) = transfer.current_session.as_mut() {
-            player.play_origin = session.play_origin.take().into();
-            player.suppressions = session.suppressions.take().into();
+            player.play_origin = session.play_origin.take().map(Into::into).into();
+            player.suppressions = session.suppressions.take().map(Into::into).into();
+
+            // maybe at some point we can use the shuffle seed provided by spotify,
+            // but I doubt it, as spotify doesn't use true randomness but rather an algorithm
+            // based shuffle
+            trace!(
+                "shuffle_seed: <{:?}> (spotify), <{:?}> (own)",
+                session.shuffle_seed,
+                session.context.get_shuffle_seed()
+            );
+
+            shuffle_seed = session
+                .context
+                .get_shuffle_seed()
+                .and_then(|seed| seed.parse().ok());
 
             if let Some(mut ctx) = session.context.take() {
-                player.restrictions = ctx.restrictions.take().into();
+                player.restrictions = ctx.restrictions.take().map(Into::into).into();
                 for (key, value) in ctx.metadata {
                     player.context_metadata.insert(key, value);
                 }
@@ -65,8 +89,11 @@ impl ConnectState {
             }
         }
 
+        self.transfer_shuffle_seed = shuffle_seed;
+
         self.clear_prev_track();
-        self.clear_next_tracks(false);
+        self.clear_next_tracks();
+        self.update_queue_revision()
     }
 
     /// completes the transfer, loading the queue and updating metadata
@@ -85,20 +112,19 @@ impl ConnectState {
         self.set_active_context(context_ty);
         self.fill_up_context = context_ty;
 
-        let ctx = self.get_context(&self.active_context).ok();
+        let ctx = self.get_context(self.active_context)?;
 
-        let current_index = if track.is_queue() {
-            Self::find_index_in_context(ctx, |c| c.uid == transfer.current_session.current_uid)
-                .map(|i| if i > 0 { i - 1 } else { i })
-        } else {
-            Self::find_index_in_context(ctx, |c| c.uri == track.uri || c.uid == track.uid)
+        let current_index = match transfer.current_session.current_uid.as_ref() {
+            Some(uid) if track.is_queue() => Self::find_index_in_context(ctx, |c| &c.uid == uid)
+                .map(|i| if i > 0 { i - 1 } else { i }),
+            _ => Self::find_index_in_context(ctx, |c| c.uri == track.uri || c.uid == track.uid),
         };
 
         debug!(
             "active track is <{}> with index {current_index:?} in {:?} context, has {} tracks",
             track.uri,
             self.active_context,
-            ctx.map(|c| c.tracks.len()).unwrap_or_default()
+            ctx.tracks.len()
         );
 
         if self.player().track.is_none() {
@@ -116,7 +142,7 @@ impl ConnectState {
         );
 
         for (i, track) in transfer.queue.tracks.iter().enumerate() {
-            if transfer.queue.is_playing_queue && i == 0 {
+            if transfer.queue.is_playing_queue.unwrap_or_default() && i == 0 {
                 // if we are currently playing from the queue,
                 // don't add the first queued item, because we are currently playing that item
                 continue;
@@ -125,6 +151,8 @@ impl ConnectState {
             if let Ok(queued_track) = self.context_to_provided_track(
                 track,
                 Some(self.context_uri()),
+                None,
+                None,
                 Some(Provider::Queue),
             ) {
                 self.add_to_queue(queued_track, false);
@@ -134,7 +162,9 @@ impl ConnectState {
         if self.shuffling_context() {
             self.set_current_track(current_index.unwrap_or_default())?;
             self.set_shuffle(true);
-            self.shuffle()?;
+
+            let previous_seed = self.transfer_shuffle_seed.take();
+            self.shuffle(previous_seed)?;
         } else {
             self.reset_playback_to_position(current_index)?;
         }

@@ -1,5 +1,11 @@
-use crate::state::{context::ResetContext, ConnectState};
-use librespot_core::{dealer::protocol::SetQueueCommand, Error};
+use crate::{
+    core::{dealer::protocol::SetQueueCommand, Error},
+    state::{
+        context::{ContextType, ResetContext},
+        metadata::Metadata,
+        ConnectState,
+    },
+};
 use protobuf::MessageField;
 
 impl ConnectState {
@@ -7,7 +13,7 @@ impl ConnectState {
         self.set_shuffle(shuffle);
 
         if shuffle {
-            return self.shuffle();
+            return self.shuffle(None);
         }
 
         self.reset_context(ResetContext::DefaultIndex);
@@ -16,11 +22,16 @@ impl ConnectState {
             return Ok(());
         }
 
-        let ctx = self.context.as_ref();
-        let current_index =
-            ConnectState::find_index_in_context(ctx, |c| self.current_track(|t| c.uri == t.uri))?;
-
-        self.reset_playback_to_position(Some(current_index))
+        match self.current_track(|t| t.get_context_index()) {
+            Some(current_index) => self.reset_playback_to_position(Some(current_index)),
+            None => {
+                let ctx = self.get_context(ContextType::Default)?;
+                let current_index = ConnectState::find_index_in_context(ctx, |c| {
+                    self.current_track(|t| c.uri == t.uri)
+                })?;
+                self.reset_playback_to_position(Some(current_index))
+            }
+        }
     }
 
     pub fn handle_set_queue(&mut self, set_queue: SetQueueCommand) {
@@ -29,30 +40,14 @@ impl ConnectState {
         self.update_queue_revision();
     }
 
-    pub fn handle_set_repeat(
-        &mut self,
-        context: Option<bool>,
-        track: Option<bool>,
-    ) -> Result<(), Error> {
-        // doesn't need any state updates, because it should only change how the current song is played
-        if let Some(track) = track {
-            self.set_repeat_track(track);
-        }
+    pub fn handle_set_repeat_context(&mut self, repeat: bool) -> Result<(), Error> {
+        self.set_repeat_context(repeat);
 
-        if matches!(context, Some(context) if self.repeat_context() == context) || context.is_none()
-        {
-            return Ok(());
-        }
-
-        if let Some(context) = context {
-            self.set_repeat_context(context);
-        }
-
-        if self.repeat_context() {
+        if repeat {
             self.set_shuffle(false);
             self.reset_context(ResetContext::DefaultIndex);
 
-            let ctx = self.context.as_ref();
+            let ctx = self.get_context(ContextType::Default)?;
             let current_track = ConnectState::find_index_in_context(ctx, |t| {
                 self.current_track(|t| &t.uri) == &t.uri
             })?;

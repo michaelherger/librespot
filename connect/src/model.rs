@@ -1,41 +1,128 @@
-use crate::state::ConnectState;
-use librespot_core::dealer::protocol::SkipTo;
-use librespot_protocol::player::Context;
-use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
+use crate::{
+    core::dealer::protocol::SkipTo, protocol::context_player_options::ContextPlayerOptionOverrides,
+};
 
+use std::ops::Deref;
+
+/// Request for loading playback
 #[derive(Debug)]
-pub struct SpircLoadCommand {
-    pub context_uri: String,
-    /// Whether the given tracks should immediately start playing, or just be initially loaded.
-    pub start_playing: bool,
-    pub seek_to: u32,
-    pub shuffle: bool,
-    pub repeat: bool,
-    pub repeat_track: bool,
-    pub playing_track: PlayingTrack,
+pub struct LoadRequest {
+    pub(super) context_uri: String,
+    pub(super) options: LoadRequestOptions,
 }
 
+impl Deref for LoadRequest {
+    type Target = LoadRequestOptions;
+
+    fn deref(&self) -> &Self::Target {
+        &self.options
+    }
+}
+
+/// The parameters for creating a load request
+#[derive(Debug, Default)]
+pub struct LoadRequestOptions {
+    /// Whether the given tracks should immediately start playing, or just be initially loaded.
+    pub start_playing: bool,
+    /// Start the playback at a specific point of the track.
+    ///
+    /// The provided value is used as milliseconds. Providing a value greater
+    /// than the track duration will start the track at the beginning.
+    pub seek_to: u32,
+    /// Options that decide how the context starts playing
+    pub context_options: Option<LoadContextOptions>,
+    /// Decides the starting position in the given context.
+    ///
+    /// If the provided item doesn't exist or is out of range,
+    /// the playback starts at the beginning of the context.
+    ///
+    /// If `None` is provided and `shuffle` is `true`, a random track is played, otherwise the first
+    pub playing_track: Option<PlayingTrack>,
+}
+
+/// The options which decide how the playback is started
+///
+/// Separated into an `enum` to exclude the other variants from being used
+/// simultaneously, as they are not compatible.
+#[derive(Debug)]
+pub enum LoadContextOptions {
+    /// Starts the context with options
+    Options(Options),
+    /// Starts the playback as the autoplay variant of the context
+    ///
+    /// This is the same as finishing a context and
+    /// automatically continuing playback of similar tracks
+    Autoplay,
+}
+
+/// The available options that indicate how to start the context
+#[derive(Debug, Default)]
+pub struct Options {
+    /// Start the context in shuffle mode
+    pub shuffle: bool,
+    /// Start the context in repeat mode
+    pub repeat: bool,
+    /// Start the context, repeating the first track until skipped or manually disabled
+    pub repeat_track: bool,
+}
+
+impl From<ContextPlayerOptionOverrides> for Options {
+    fn from(value: ContextPlayerOptionOverrides) -> Self {
+        Self {
+            shuffle: value.shuffling_context.unwrap_or_default(),
+            repeat: value.repeating_context.unwrap_or_default(),
+            repeat_track: value.repeating_track.unwrap_or_default(),
+        }
+    }
+}
+
+impl LoadRequest {
+    /// Create a load request from a `context_uri`
+    ///
+    /// For supported `context_uri` see [`SpClient::get_context`](librespot_core::spclient::SpClient::get_context)
+    pub fn from_context_uri(context_uri: String, options: LoadRequestOptions) -> Self {
+        Self {
+            context_uri,
+            options,
+        }
+    }
+}
+
+/// An item that represent a track to play
 #[derive(Debug)]
 pub enum PlayingTrack {
+    /// Represent the track at a given index.
     Index(u32),
+    /// Represent the uri of a track.
     Uri(String),
+    #[doc(hidden)]
+    /// Represent an internal identifier from spotify.
+    ///
+    /// The internal identifier is not the id contained in the uri. And rather
+    /// an unrelated id probably unique in spotify's internal database. But that's
+    /// just speculation.
+    ///
+    /// This identifier is not available by any public api. It's used for varies in
+    /// any spotify client, like sorting, displaying which track is currently played
+    /// and skipping to a track. Mobile uses it pretty intensively but also web and
+    /// desktop seem to make use of it.
     Uid(String),
 }
 
-impl From<SkipTo> for PlayingTrack {
-    fn from(value: SkipTo) -> Self {
+impl TryFrom<SkipTo> for PlayingTrack {
+    type Error = ();
+
+    fn try_from(value: SkipTo) -> Result<Self, Self::Error> {
         // order of checks is important, as the index can be 0, but still has an uid or uri provided,
         // so we only use the index as last resort
         if let Some(uri) = value.track_uri {
-            PlayingTrack::Uri(uri)
+            Ok(PlayingTrack::Uri(uri))
         } else if let Some(uid) = value.track_uid {
-            PlayingTrack::Uid(uid)
+            Ok(PlayingTrack::Uid(uid))
+        } else if let Some(index) = value.track_index {
+            Ok(PlayingTrack::Index(index))
         } else {
-            PlayingTrack::Index(value.track_index.unwrap_or_else(|| {
-                warn!("SkipTo didn't provided any point to skip to, falling back to index 0");
-                0
-            }))
+            Err(())
         }
     }
 }
@@ -57,132 +144,4 @@ pub(super) enum SpircPlayStatus {
         position_ms: u32,
         preloading_of_next_track_triggered: bool,
     },
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct ResolveContext {
-    context: Context,
-    fallback: Option<String>,
-    autoplay: bool,
-    /// if `true` updates the entire context, otherwise only fills the context from the next
-    /// retrieve page, it is usually used when loading the next page of an already established context
-    ///
-    /// like for example:
-    /// - playing an artists profile
-    update: bool,
-}
-
-impl ResolveContext {
-    pub fn from_uri(uri: impl Into<String>, fallback: impl Into<String>, autoplay: bool) -> Self {
-        let fallback_uri = fallback.into();
-        Self {
-            context: Context {
-                uri: uri.into(),
-                ..Default::default()
-            },
-            fallback: (!fallback_uri.is_empty()).then_some(fallback_uri),
-            autoplay,
-            update: true,
-        }
-    }
-
-    pub fn from_context(context: Context, autoplay: bool) -> Self {
-        Self {
-            context,
-            fallback: None,
-            autoplay,
-            update: true,
-        }
-    }
-
-    // expected page_url: hm://artistplaycontext/v1/page/spotify/album/5LFzwirfFwBKXJQGfwmiMY/km_artist
-    pub fn from_page_url(page_url: String) -> Self {
-        let split = if let Some(rest) = page_url.strip_prefix("hm://") {
-            rest.split('/')
-        } else {
-            warn!("page_url didn't started with hm://. got page_url: {page_url}");
-            page_url.split('/')
-        };
-
-        let uri = split
-            .skip_while(|s| s != &"spotify")
-            .take(3)
-            .collect::<Vec<&str>>()
-            .join(":");
-
-        trace!("created an ResolveContext from page_url <{page_url}> as uri <{uri}>");
-
-        Self {
-            context: Context {
-                uri,
-                ..Default::default()
-            },
-            fallback: None,
-            update: false,
-            autoplay: false,
-        }
-    }
-
-    /// the uri which should be used to resolve the context, might not be the context uri
-    pub fn resolve_uri(&self) -> Option<&String> {
-        // it's important to call this always, or at least for every ResolveContext
-        // otherwise we might not even check if we need to fallback and just use the fallback uri
-        ConnectState::get_context_uri_from_context(&self.context)
-            .and_then(|s| (!s.is_empty()).then_some(s))
-            .or(self.fallback.as_ref())
-    }
-
-    /// the actual context uri
-    pub fn context_uri(&self) -> &str {
-        &self.context.uri
-    }
-
-    pub fn autoplay(&self) -> bool {
-        self.autoplay
-    }
-
-    pub fn update(&self) -> bool {
-        self.update
-    }
-}
-
-impl Display for ResolveContext {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "resolve_uri: <{:?}>, context_uri: <{}>, autoplay: <{}>, update: <{}>",
-            self.resolve_uri(),
-            self.context.uri,
-            self.autoplay,
-            self.update
-        )
-    }
-}
-
-impl PartialEq for ResolveContext {
-    fn eq(&self, other: &Self) -> bool {
-        let eq_context = self.context_uri() == other.context_uri();
-        let eq_resolve = self.resolve_uri() == other.resolve_uri();
-        let eq_autoplay = self.autoplay == other.autoplay;
-        let eq_update = self.update == other.update;
-
-        eq_context && eq_resolve && eq_autoplay && eq_update
-    }
-}
-
-impl Eq for ResolveContext {}
-
-impl Hash for ResolveContext {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.context_uri().hash(state);
-        self.resolve_uri().hash(state);
-        self.autoplay.hash(state);
-        self.update.hash(state);
-    }
-}
-
-impl From<ResolveContext> for Context {
-    fn from(value: ResolveContext) -> Self {
-        value.context
-    }
 }

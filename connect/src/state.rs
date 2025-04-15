@@ -1,27 +1,30 @@
 pub(super) mod context;
 mod handle;
-pub mod metadata;
+mod metadata;
 mod options;
 pub(super) mod provider;
 mod restrictions;
 mod tracks;
 mod transfer;
 
-use crate::model::SpircPlayStatus;
-use crate::state::{
-    context::{ContextType, ResetContext, StateContext},
-    provider::{IsProvider, Provider},
-};
-use librespot_core::{
-    config::DeviceType, date::Date, dealer::protocol::Request, spclient::SpClientResult, version,
-    Error, Session,
-};
-use librespot_protocol::connect::{
-    Capabilities, Device, DeviceInfo, MemberType, PutStateReason, PutStateRequest,
-};
-use librespot_protocol::player::{
-    ContextIndex, ContextPage, ContextPlayerOptions, PlayOrigin, PlayerState, ProvidedTrack,
-    Suppressions,
+use crate::{
+    core::{
+        config::DeviceType, date::Date, dealer::protocol::Request, spclient::SpClientResult,
+        version, Error, Session,
+    },
+    model::SpircPlayStatus,
+    protocol::{
+        connect::{Capabilities, Device, DeviceInfo, MemberType, PutStateReason, PutStateRequest},
+        media::AudioQuality,
+        player::{
+            ContextIndex, ContextPlayerOptions, PlayOrigin, PlayerState, ProvidedTrack,
+            Suppressions,
+        },
+    },
+    state::{
+        context::{ContextType, ResetContext, StateContext},
+        provider::{IsProvider, Provider},
+    },
 };
 use log::LevelFilter;
 use protobuf::{EnumOrUnknown, MessageField};
@@ -37,23 +40,24 @@ const SPOTIFY_MAX_PREV_TRACKS_SIZE: usize = 10;
 const SPOTIFY_MAX_NEXT_TRACKS_SIZE: usize = 80;
 
 #[derive(Debug, Error)]
-pub enum StateError {
+pub(super) enum StateError {
     #[error("the current track couldn't be resolved from the transfer state")]
     CouldNotResolveTrackFromTransfer,
-    #[error("message field {0} was not available")]
-    MessageFieldNone(String),
     #[error("context is not available. type: {0:?}")]
     NoContext(ContextType),
     #[error("could not find track {0:?} in context of {1}")]
     CanNotFindTrackInContext(Option<usize>, usize),
     #[error("currently {action} is not allowed because {reason}")]
-    CurrentlyDisallowed { action: String, reason: String },
+    CurrentlyDisallowed {
+        action: &'static str,
+        reason: String,
+    },
     #[error("the provided context has no tracks")]
     ContextHasNoTracks,
     #[error("playback of local files is not supported")]
     UnsupportedLocalPlayBack,
-    #[error("track uri <{0}> contains invalid characters")]
-    InvalidTrackUri(String),
+    #[error("track uri <{0:?}> contains invalid characters")]
+    InvalidTrackUri(Option<String>),
 }
 
 impl From<StateError> for Error {
@@ -61,7 +65,6 @@ impl From<StateError> for Error {
         use StateError::*;
         match err {
             CouldNotResolveTrackFromTransfer
-            | MessageFieldNone(_)
             | NoContext(_)
             | CanNotFindTrackInContext(_, _)
             | ContextHasNoTracks
@@ -71,62 +74,66 @@ impl From<StateError> for Error {
     }
 }
 
+/// Configuration of the connect device
 #[derive(Debug, Clone)]
-pub struct ConnectStateConfig {
-    pub session_id: String,
-    pub initial_volume: u32,
+pub struct ConnectConfig {
+    /// The name of the connect device (default: librespot)
     pub name: String,
+    /// The icon type of the connect device (default: [DeviceType::Speaker])
     pub device_type: DeviceType,
-    pub volume_steps: i32,
+    /// Displays the [DeviceType] twice in the ui to show up as a group (default: false)
     pub is_group: bool,
+    /// The volume with which the connect device will be initialized (default: 50%)
+    pub initial_volume: u16,
+    /// Disables the option to control the volume remotely (default: false)
+    pub disable_volume: bool,
+    /// The steps in which the volume is incremented (default: 1024)
+    pub volume_steps: u16,
 }
 
-impl Default for ConnectStateConfig {
+impl Default for ConnectConfig {
     fn default() -> Self {
         Self {
-            session_id: String::new(),
-            initial_volume: u32::from(u16::MAX) / 2,
             name: "Spotty".to_string(),
             device_type: DeviceType::Speaker,
-            volume_steps: 64,
             is_group: false,
+            initial_volume: u16::MAX / 2,
+            disable_volume: false,
+            volume_steps: 1024,
         }
     }
 }
 
 #[derive(Default, Debug)]
-pub struct ConnectState {
+pub(super) struct ConnectState {
     /// the entire state that is updated to the remote server
     request: PutStateRequest,
 
     unavailable_uri: Vec<String>,
 
-    pub active_since: Option<SystemTime>,
+    active_since: Option<SystemTime>,
     queue_count: u64,
 
     // separation is necessary because we could have already loaded
     // the autoplay context but are still playing from the default context
     /// to update the active context use [switch_active_context](ConnectState::set_active_context)
     pub active_context: ContextType,
-    pub fill_up_context: ContextType,
+    fill_up_context: ContextType,
 
     /// the context from which we play, is used to top up prev and next tracks
-    pub context: Option<StateContext>,
-    /// upcoming contexts, directly provided by the context-resolver
-    next_contexts: Vec<ContextPage>,
+    context: Option<StateContext>,
+    /// seed extracted in [ConnectState::handle_initial_transfer] and used in [ConnectState::finish_transfer]
+    transfer_shuffle_seed: Option<u64>,
 
-    /// a context to keep track of our shuffled context,
-    /// should be only available when `player.option.shuffling_context` is true
-    shuffle_context: Option<StateContext>,
     /// a context to keep track of the autoplay context
     autoplay_context: Option<StateContext>,
 }
 
 impl ConnectState {
-    pub fn new(cfg: ConnectStateConfig, session: &Session) -> Self {
+    pub fn new(cfg: ConnectConfig, session: &Session) -> Self {
         let device_info = DeviceInfo {
             can_play: true,
-            volume: cfg.initial_volume,
+            volume: cfg.initial_volume.into(),
             name: cfg.name,
             device_id: session.device_id().to_string(),
             device_type: EnumOrUnknown::new(cfg.device_type.into()),
@@ -135,15 +142,15 @@ impl ConnectState {
             client_id: session.client_id(),
             is_group: cfg.is_group,
             capabilities: MessageField::some(Capabilities {
-                volume_steps: cfg.volume_steps,
-                hidden: false, // could be exposed later to only observe the playback
+                volume_steps: cfg.volume_steps.into(),
+                disable_volume: cfg.disable_volume,
+
                 gaia_eq_connect_id: true,
                 can_be_player: true,
-
                 needs_full_player_state: true,
-
                 is_observable: true,
                 is_controllable: true,
+                hidden: false,
 
                 supports_gzip_pushes: true,
                 // todo: enable after logout handling is implemented, see spirc logout_request
@@ -156,14 +163,19 @@ impl ConnectState {
 
                 is_voice_enabled: false,
                 restrict_to_local: false,
-                disable_volume: false,
                 connect_disabled: false,
                 supports_rename: false,
                 supports_external_episodes: false,
                 supports_set_backend_metadata: false,
                 supports_hifi: MessageField::none(),
+                // that "AI" dj thingy only available to specific regions/users
+                supports_dj: false,
+                supports_rooms: false,
+                // AudioQuality::HIFI is available, further investigation necessary
+                supported_audio_quality: EnumOrUnknown::new(AudioQuality::VERY_HIGH),
 
                 command_acks: true,
+
                 ..Default::default()
             }),
             ..Default::default()
@@ -176,7 +188,7 @@ impl ConnectState {
                 device: MessageField::some(Device {
                     device_info: MessageField::some(device_info),
                     player_state: MessageField::some(PlayerState {
-                        session_id: cfg.session_id,
+                        session_id: session.session_id(),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -236,6 +248,22 @@ impl ConnectState {
         self.request.is_active
     }
 
+    /// Returns the `is_playing` value as perceived by other connect devices
+    ///
+    /// see [ConnectState::set_status]
+    pub fn is_playing(&self) -> bool {
+        let player = self.player();
+        player.is_playing && !player.is_paused
+    }
+
+    /// Returns the `is_paused` state value as perceived by other connect devices
+    ///
+    /// see [ConnectState::set_status]
+    pub fn is_pause(&self) -> bool {
+        let player = self.player();
+        player.is_playing && player.is_paused && player.is_buffering
+    }
+
     pub fn set_volume(&mut self, volume: u32) {
         self.device_mut()
             .device_info
@@ -293,6 +321,12 @@ impl ConnectState {
                 | SpircPlayStatus::Stopped
         );
 
+        if player.is_paused {
+            player.playback_speed = 0.;
+        } else {
+            player.playback_speed = 1.;
+        }
+
         // desktop and mobile require all 'states' set to true, when we are paused,
         // otherwise the play button (desktop) is grayed out or the preview (mobile) can't be opened
         player.is_buffering = player.is_paused
@@ -345,9 +379,15 @@ impl ConnectState {
     }
 
     pub fn reset_playback_to_position(&mut self, new_index: Option<usize>) -> Result<(), Error> {
+        debug!(
+            "reset_playback with active ctx <{:?}> fill_up ctx <{:?}>",
+            self.active_context, self.fill_up_context
+        );
+
         let new_index = new_index.unwrap_or(0);
         self.update_current_index(|i| i.track = new_index as u32);
         self.update_context_index(self.active_context, new_index + 1)?;
+        self.fill_up_context = self.active_context;
 
         if !self.current_track(|t| t.is_queue()) {
             self.set_current_track(new_index)?;
@@ -356,7 +396,7 @@ impl ConnectState {
         self.clear_prev_track();
 
         if new_index > 0 {
-            let context = self.get_context(&self.active_context)?;
+            let context = self.get_context(self.active_context)?;
 
             let before_new_track = context.tracks.len() - new_index;
             self.player_mut().prev_tracks = context
@@ -371,7 +411,7 @@ impl ConnectState {
             debug!("has {} prev tracks", self.prev_tracks().len())
         }
 
-        self.clear_next_tracks(true);
+        self.clear_next_tracks();
         self.fill_up_next_tracks()?;
         self.update_restrictions();
 

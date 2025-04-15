@@ -907,27 +907,28 @@ impl PlayerTrackLoader {
 
     fn stream_data_rate(&self, format: AudioFileFormat) -> Option<usize> {
         let kbps = match format {
-            AudioFileFormat::OGG_VORBIS_96 => 12,
-            AudioFileFormat::OGG_VORBIS_160 => 20,
-            AudioFileFormat::OGG_VORBIS_320 => 40,
-            AudioFileFormat::MP3_256 => 32,
-            AudioFileFormat::MP3_320 => 40,
-            AudioFileFormat::MP3_160 => 20,
-            AudioFileFormat::MP3_96 => 12,
-            AudioFileFormat::MP3_160_ENC => 20,
-            AudioFileFormat::AAC_24 => 3,
-            AudioFileFormat::AAC_48 => 6,
-            AudioFileFormat::AAC_160 => 20,
-            AudioFileFormat::AAC_320 => 40,
-            AudioFileFormat::MP4_128 => 16,
-            AudioFileFormat::OTHER5 => 40,
-            AudioFileFormat::FLAC_FLAC => 112, // assume 900 kbit/s on average
-            AudioFileFormat::UNKNOWN_FORMAT => {
-                error!("Unknown stream data rate");
-                return None;
-            }
+            AudioFileFormat::OGG_VORBIS_96 => 12.,
+            AudioFileFormat::OGG_VORBIS_160 => 20.,
+            AudioFileFormat::OGG_VORBIS_320 => 40.,
+            AudioFileFormat::MP3_256 => 32.,
+            AudioFileFormat::MP3_320 => 40.,
+            AudioFileFormat::MP3_160 => 20.,
+            AudioFileFormat::MP3_96 => 12.,
+            AudioFileFormat::MP3_160_ENC => 20.,
+            AudioFileFormat::AAC_24 => 3.,
+            AudioFileFormat::AAC_48 => 6.,
+            AudioFileFormat::AAC_160 => 20.,
+            AudioFileFormat::AAC_320 => 40.,
+            AudioFileFormat::MP4_128 => 16.,
+            AudioFileFormat::OTHER5 => 40.,
+            AudioFileFormat::FLAC_FLAC => 112., // assume 900 kbit/s on average
+            AudioFileFormat::XHE_AAC_12 => 1.5,
+            AudioFileFormat::XHE_AAC_16 => 2.,
+            AudioFileFormat::XHE_AAC_24 => 3.,
+            AudioFileFormat::FLAC_FLAC_24BIT => 3.,
         };
-        Some(kbps * 1024)
+        let data_rate: f32 = kbps * 1024.;
+        Some(data_rate.ceil() as usize)
     }
 
     async fn load_track(
@@ -1802,7 +1803,7 @@ impl PlayerInternal {
             self.ensure_sink_stopped(play);
         }
 
-        if matches!(self.state, PlayerState::Invalid { .. }) {
+        if matches!(self.state, PlayerState::Invalid) {
             return Err(Error::internal(format!(
                 "Player::handle_command_load called from invalid state: {:?}",
                 self.state
@@ -2260,9 +2261,7 @@ impl PlayerInternal {
             let wait_for_data_length =
                 (read_ahead_during_playback.as_secs_f32() * bytes_per_second as f32) as usize;
 
-            stream_loader_controller
-                .fetch_next_and_wait(request_data_length, wait_for_data_length)
-                .map_err(Into::into)
+            stream_loader_controller.fetch_next_and_wait(request_data_length, wait_for_data_length)
         } else {
             Ok(())
         }

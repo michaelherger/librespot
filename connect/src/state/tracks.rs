@@ -1,12 +1,15 @@
-use crate::state::{
-    context::ContextType,
-    metadata::Metadata,
-    provider::{IsProvider, Provider},
-    ConnectState, StateError, SPOTIFY_MAX_NEXT_TRACKS_SIZE, SPOTIFY_MAX_PREV_TRACKS_SIZE,
+use crate::{
+    core::{Error, SpotifyId},
+    protocol::player::ProvidedTrack,
+    state::{
+        context::ContextType,
+        metadata::Metadata,
+        provider::{IsProvider, Provider},
+        ConnectState, StateError, SPOTIFY_MAX_NEXT_TRACKS_SIZE, SPOTIFY_MAX_PREV_TRACKS_SIZE,
+    },
 };
-use librespot_core::{Error, SpotifyId};
-use librespot_protocol::player::ProvidedTrack;
 use protobuf::MessageField;
+use rand::Rng;
 
 // identifier used as part of the uid
 pub const IDENTIFIER_DELIMITER: &str = "delimiter";
@@ -20,7 +23,7 @@ impl<'ct> ConnectState {
             ..Default::default()
         };
         delimiter.set_hidden(true);
-        delimiter.add_iteration(iteration);
+        delimiter.set_iteration(iteration);
 
         delimiter
     }
@@ -64,8 +67,14 @@ impl<'ct> ConnectState {
         &self.player().next_tracks
     }
 
+    pub fn set_current_track_random(&mut self) -> Result<(), Error> {
+        let max_tracks = self.get_context(self.active_context)?.tracks.len();
+        let rng_track = rand::thread_rng().gen_range(0..max_tracks);
+        self.set_current_track(rng_track)
+    }
+
     pub fn set_current_track(&mut self, index: usize) -> Result<(), Error> {
-        let context = self.get_context(&self.active_context)?;
+        let context = self.get_context(self.active_context)?;
 
         let new_track = context
             .tracks
@@ -77,8 +86,8 @@ impl<'ct> ConnectState {
 
         debug!(
             "set track to: {} at {} of {} tracks",
-            index,
             new_track.uri,
+            index,
             context.tracks.len()
         );
 
@@ -115,6 +124,7 @@ impl<'ct> ConnectState {
                     continue;
                 }
                 Some(next) if next.is_unavailable() => continue,
+                Some(next) if self.is_skip_track(&next) => continue,
                 other => break other,
             };
         };
@@ -132,12 +142,10 @@ impl<'ct> ConnectState {
             self.set_active_context(ContextType::Autoplay);
             None
         } else {
-            let ctx = self.context.as_ref();
-            let new_index = Self::find_index_in_context(ctx, |c| c.uri == new_track.uri);
-            match new_index {
-                Ok(new_index) => Some(new_index as u32),
-                Err(why) => {
-                    error!("didn't find the track in the current context: {why}");
+            match new_track.get_context_index() {
+                Some(new_index) => Some(new_index as u32),
+                None => {
+                    error!("the given context track had no set context_index");
                     None
                 }
             }
@@ -240,6 +248,14 @@ impl<'ct> ConnectState {
                 self.queue_count += 1;
             });
 
+        // when you drag 'n drop the current track in the queue view into the "Next from: ..."
+        // section, it is only send as an empty item with just the provider and metadata, so we have
+        // to provide set the uri from the current track manually
+        tracks
+            .iter_mut()
+            .filter(|t| t.uri.is_empty())
+            .for_each(|t| t.uri = self.current_track(|ct| ct.uri.clone()));
+
         self.player_mut().next_tracks = tracks;
     }
 
@@ -251,12 +267,7 @@ impl<'ct> ConnectState {
         self.prev_tracks_mut().clear()
     }
 
-    pub fn clear_next_tracks(&mut self, keep_queued: bool) {
-        if !keep_queued {
-            self.next_tracks_mut().clear();
-            return;
-        }
-
+    pub fn clear_next_tracks(&mut self) {
         // respect queued track and don't throw them out of our next played tracks
         let first_non_queued_track = self
             .next_tracks()
@@ -271,13 +282,13 @@ impl<'ct> ConnectState {
         }
     }
 
-    pub fn fill_up_next_tracks(&mut self) -> Result<(), StateError> {
-        let ctx = self.get_context(&self.fill_up_context)?;
+    pub fn fill_up_next_tracks(&mut self) -> Result<(), Error> {
+        let ctx = self.get_context(self.fill_up_context)?;
         let mut new_index = ctx.index.track as usize;
         let mut iteration = ctx.index.page;
 
         while self.next_tracks().len() < SPOTIFY_MAX_NEXT_TRACKS_SIZE {
-            let ctx = self.get_context(&self.fill_up_context)?;
+            let ctx = self.get_context(self.fill_up_context)?;
             let track = match ctx.tracks.get(new_index) {
                 None if self.repeat_context() => {
                     let delimiter = Self::new_delimiter(iteration.into());
@@ -292,14 +303,14 @@ impl<'ct> ConnectState {
 
                     // transition to autoplay as fill up context
                     self.fill_up_context = ContextType::Autoplay;
-                    new_index = self.get_context(&ContextType::Autoplay)?.index.track as usize;
+                    new_index = self.get_context(ContextType::Autoplay)?.index.track as usize;
 
                     // add delimiter to only display the current context
                     Self::new_delimiter(iteration.into())
                 }
                 None if self.autoplay_context.is_some() => {
                     match self
-                        .get_context(&ContextType::Autoplay)?
+                        .get_context(ContextType::Autoplay)?
                         .tracks
                         .get(new_index)
                     {
@@ -311,7 +322,7 @@ impl<'ct> ConnectState {
                     }
                 }
                 None => break,
-                Some(ct) if ct.is_unavailable() => {
+                Some(ct) if ct.is_unavailable() || self.is_skip_track(ct) => {
                     new_index += 1;
                     continue;
                 }
@@ -323,6 +334,11 @@ impl<'ct> ConnectState {
 
             self.next_tracks_mut().push(track);
         }
+
+        debug!(
+            "finished filling up next_tracks ({})",
+            self.next_tracks().len()
+        );
 
         self.update_context_index(self.fill_up_context, new_index)?;
 
@@ -350,17 +366,14 @@ impl<'ct> ConnectState {
         }
     }
 
-    pub fn prev_autoplay_track_uris(&self) -> Vec<String> {
+    pub fn recent_track_uris(&self) -> Vec<String> {
         let mut prev = self
             .prev_tracks()
             .iter()
-            .flat_map(|t| t.is_autoplay().then_some(t.uri.clone()))
+            .map(|t| t.uri.clone())
             .collect::<Vec<_>>();
 
-        if self.current_track(|t| t.is_autoplay()) {
-            prev.push(self.current_track(|t| t.uri.clone()));
-        }
-
+        prev.push(self.current_track(|t| t.uri.clone()));
         prev
     }
 
@@ -400,7 +413,7 @@ impl<'ct> ConnectState {
 
         track.set_provider(Provider::Queue);
         if !track.is_from_queue() {
-            track.set_queued(true);
+            track.set_from_queue(true);
         }
 
         let next_tracks = self.next_tracks_mut();
