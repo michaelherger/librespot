@@ -3365,15 +3365,10 @@ dependencies = [
 name = "spotty"
 version = "1.9.96"
 dependencies = [
- "base64 0.22.1",
- "bytes",
  "data-encoding",
  "env_logger",
  "futures-util",
  "getopts",
- "http-body-util",
- "hyper 1.5.0",
- "hyper-util",
  "librespot-audio",
  "librespot-connect",
  "librespot-core",

@@ -52,9 +52,8 @@ use sysinfo::{ProcessesToUpdate, System};
 use thiserror::Error;
 use url::Url;
 
+#[cfg(not(feature = "spotty"))]
 mod player_event_handler;
-#[cfg(feature = "spotty")]
-use player_event_handler::EventHandler;
 #[cfg(not(feature = "spotty"))]
 use player_event_handler::{run_program_on_sink_events, EventHandler};
 
@@ -238,6 +237,7 @@ struct Setup {
     #[cfg(not(feature = "spotty"))]
     oauth_port: Option<u16>,
     zeroconf_port: u16,
+    #[cfg(not(feature = "spotty"))]
     player_event_program: Option<String>,
     #[cfg(not(feature = "spotty"))]
     emit_sink_events: bool,
@@ -248,7 +248,6 @@ struct Setup {
     single_track: Option<String>,
     start_position: u32,
     client_id: Option<String>,
-    scopes: Option<String>,
     get_token: bool,
     save_token: Option<String>,
 }
@@ -1989,24 +1988,10 @@ fn get_setup() -> Setup {
             normalisation_knee_db,
             ditherer,
             position_update_interval: None,
-            #[cfg(feature = "spotty")]
-            lms_connect_mode: !opt_present(SINGLE_TRACK),
         }
     };
 
     let authenticate = opt_present(AUTHENTICATE);
-
-    #[cfg(feature = "spotty")]
-    let player_event_program = if opt_present(LYRION_MUSIC_SERVER) && opt_present(PLAYER_MAC) {
-        Some(format!(
-            "{}|{}|{}",
-            opt_str(LYRION_MUSIC_SERVER).unwrap(),
-            opt_str(PLAYER_MAC).unwrap_or_default(),
-            opt_str(LMS_AUTH).unwrap_or_default(),
-        ))
-    } else {
-        None
-    };
 
     #[cfg(not(feature = "spotty"))]
     let player_event_program = opt_str(ONEVENT);
@@ -2038,6 +2023,7 @@ fn get_setup() -> Setup {
         #[cfg(not(feature = "spotty"))]
         oauth_port,
         zeroconf_port,
+        #[cfg(not(feature = "spotty"))]
         player_event_program,
         #[cfg(not(feature = "spotty"))]
         emit_sink_events,
@@ -2059,7 +2045,6 @@ fn get_setup() -> Setup {
         } else {
             Some(client_id)
         },
-        scopes: opt_str(SCOPE),
     }
 }
 
@@ -2082,6 +2067,7 @@ async fn main() {
     let mut auto_connect_times: Vec<Instant> = vec![];
     let mut discovery = None;
     let mut connecting = false;
+    #[cfg(not(feature = "spotty"))]
     let mut _event_handler: Option<EventHandler> = None;
 
     let mut session = Session::new(setup.session_config.clone(), setup.cache.clone());
@@ -2184,14 +2170,7 @@ async fn main() {
         .await;
         exit(0);
     } else if setup.get_token {
-        spotty::get_token(
-            setup.client_id,
-            setup.scopes,
-            setup.save_token,
-            last_credentials,
-            session,
-        )
-        .await;
+        spotty::get_token(setup.client_id, setup.save_token, last_credentials, session).await;
         exit(0);
     }
 
@@ -2213,13 +2192,13 @@ async fn main() {
         (backend)(device, format)
     });
 
+    #[cfg(not(feature = "spotty"))]
     if let Some(player_event_program) = setup.player_event_program.clone() {
         _event_handler = Some(EventHandler::new(
             player.get_player_event_channel(),
             &player_event_program,
         ));
 
-        #[cfg(not(feature = "spotty"))]
         if setup.emit_sink_events {
             player.set_sink_event_callback(Some(Box::new(move |sink_status| {
                 run_program_on_sink_events(sink_status, &player_event_program)

@@ -23,11 +23,6 @@ impl FromStr for Bitrate {
 }
 
 impl Default for Bitrate {
-    #[cfg(feature = "spotty")]
-    fn default() -> Self {
-        Self::Bitrate96
-    }
-    #[cfg(not(feature = "spotty"))]
     fn default() -> Self {
         Self::Bitrate160
     }
@@ -147,9 +142,6 @@ pub struct PlayerConfig {
     /// Setting this will enable periodically sending events during playback informing about the playback position
     /// To consume the PlayerEvent::PositionChanged event, listen to events via `Player::get_player_event_channel()``
     pub position_update_interval: Option<Duration>,
-
-    #[cfg(feature = "spotty")]
-    pub lms_connect_mode: bool,
 }
 
 impl Default for PlayerConfig {
@@ -168,9 +160,6 @@ impl Default for PlayerConfig {
             passthrough: false,
             ditherer: Some(mk_ditherer::<TriangularDitherer>),
             position_update_interval: None,
-
-            #[cfg(feature = "spotty")]
-            lms_connect_mode: false,
         }
     }
 }

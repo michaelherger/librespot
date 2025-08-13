@@ -1708,18 +1708,6 @@ impl PlayerInternal {
             }
 
             None => {
-                #[cfg(feature = "spotty")]
-                if self.config.lms_connect_mode {
-                    // info!("In LMS Connect mode - ignore end of track");
-
-                    // this is one ugly hack to prevent a tight loop... sleep a few milliseconds.
-                    // TODO - review with each relevant change to librespot, get rid of this ASAP
-                    let sleep_duration = Duration::from_millis(10);
-                    thread::sleep(sleep_duration);
-
-                    return;
-                }
-
                 self.state.playing_to_end_of_track();
                 if let PlayerState::EndOfTrack {
                     track_id,

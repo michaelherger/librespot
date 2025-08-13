@@ -14,8 +14,6 @@ use librespot::playback::config::{AudioFormat, PlayerConfig};
 use librespot::playback::mixer::NoOpVolume;
 use librespot::playback::player::Player;
 
-const SCOPES: &str = "user-read-private,playlist-read-private,playlist-read-collaborative,playlist-modify-public,playlist-modify-private,user-follow-modify,user-follow-read,user-library-read,user-library-modify,user-top-read,user-read-recently-played";
-
 #[cfg(debug_assertions)]
 const DEBUGMODE: bool = true;
 #[cfg(not(debug_assertions))]
@@ -45,53 +43,43 @@ pub fn check(version_info: String) {
 
 // inspired by examples/get_token.rs
 pub async fn get_token(
-    client_id: Option<String>,
-    scopes: Option<String>,
+    _client_id: Option<String>,
     save_token: Option<String>,
     last_credentials: Option<Credentials>,
     session: Session,
 ) {
     match last_credentials {
-        Some(last_credentials) => {
-            if let Some(client_id) = client_id {
-                let scopes = scopes.unwrap_or_else(|| SCOPES.to_string());
-                session.set_client_id(client_id.as_str());
-
-                match session.connect(last_credentials, true).await {
-                    Ok(()) => match session.token_provider().get_token(&scopes).await {
-                        Ok(token) => {
-                            write_response(
-                                json!({
-                                    "accessToken": token.access_token,
-                                    "expiresIn": token.expires_in,
-                                }),
-                                save_token,
-                            );
-                        }
-                        Err(error) => {
-                            error!("Failed to fetch token: {:?}", error);
-                            write_response(
-                                json!({
-                                    "error": "Failed to get access token."
-                                }),
-                                save_token,
-                            );
-                        }
-                    },
-                    Err(error) => {
-                        error!("Failed to create session (get_token): {:?}", error);
-                        write_response(
-                            json!({
-                                "error": "Failed to create session or connect to servers."
-                            }),
-                            save_token,
-                        );
-                    }
+        Some(last_credentials) => match session.connect(last_credentials, true).await {
+            Ok(()) => match session.login5().auth_token().await {
+                Ok(token) => {
+                    write_response(
+                        json!({
+                            "accessToken": token.access_token,
+                            "expiresIn": token.expires_in,
+                        }),
+                        save_token,
+                    );
                 }
-            } else {
-                println!("Use --client-id to provide a CLIENT_ID");
+                Err(error) => {
+                    error!("Failed to fetch token: {:?}", error);
+                    write_response(
+                        json!({
+                            "error": "Failed to get access token."
+                        }),
+                        save_token,
+                    );
+                }
+            },
+            Err(error) => {
+                error!("Failed to create session (get_token): {:?}", error);
+                write_response(
+                    json!({
+                        "error": "Failed to create session or connect to servers."
+                    }),
+                    save_token,
+                );
             }
-        }
+        },
         None => {
             println!("Missing credentials");
         }
