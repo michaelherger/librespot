@@ -1,14 +1,14 @@
 [package]
 name = "spotty"
 version = "1.9.97"
-rust-version = "1.81"
+rust-version = "1.85"
 authors = ["Librespot Org", "Michael Herger <michael@herger.net>"]
 license = "MIT"
 description = "An open source client library for Spotify, with support for Spotify Connect"
 keywords = ["spotify"]
 repository = "https://github.com/michaelherger/librespot"
 readme = "README.md"
-edition = "2021"
+edition = "2024"
 
 [workspace]
 
@@ -56,15 +56,26 @@ version = "0.6.0-dev"
 
 [dependencies]
 data-encoding = "2.5"
-env_logger =  { version = "0.11.2", default-features = false, features = ["color", "humantime", "auto-color"] }
+env_logger = { version = "0.11.2", default-features = false, features = [
+    "color",
+    "humantime",
+    "auto-color",
+] }
 futures-util = { version = "0.3", default-features = false }
 getopts = "0.2"
 log = "0.4"
 serde_json = "1.0"
 sha1 = "0.10"
-sysinfo = { version = "0.33.0", default-features = false, features = ["system"] }
-thiserror = "2.0"
-tokio = { version = "1.40", features = ["rt", "macros", "signal", "sync", "parking_lot", "process"] }
+sysinfo = { version = "0.36", default-features = false, features = ["system"] }
+thiserror = "2"
+tokio = { version = "1", features = [
+    "rt",
+    "macros",
+    "signal",
+    "sync",
+    "parking_lot",
+    "process",
+] }
 url = "2.2"
 
 [features]
@@ -99,9 +110,21 @@ available in the official library."""
 section = "sound"
 priority = "optional"
 assets = [
-    ["target/release/librespot", "usr/bin/", "755"],
-    ["contrib/librespot.service", "lib/systemd/system/", "644"],
-    ["contrib/librespot.user.service", "lib/systemd/user/", "644"]
+    [
+        "target/release/librespot",
+        "usr/bin/",
+        "755",
+    ],
+    [
+        "contrib/librespot.service",
+        "lib/systemd/system/",
+        "644",
+    ],
+    [
+        "contrib/librespot.user.service",
+        "lib/systemd/user/",
+        "644",
+    ],
 ]
 
 [profile.release]
@@ -110,4 +133,4 @@ panic = "abort"
 strip = "symbols"
 
 [workspace.package]
-rust-version = "1.81"
+rust-version = "1.85"

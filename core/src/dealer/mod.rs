@@ -88,8 +88,8 @@ impl Responder {
         })
         .to_string();
 
-        if let Err(e) = self.tx.send(WsMessage::Text(response)) {
-            warn!("Wasn't able to reply to dealer request: {}", e);
+        if let Err(e) = self.tx.send(WsMessage::Text(response.into())) {
+            warn!("Wasn't able to reply to dealer request: {e}");
         }
     }
 
@@ -452,7 +452,7 @@ impl Dealer {
 
         if let Some(handle) = self.handle.take() {
             if let Err(e) = CancelOnDrop(handle).await {
-                error!("error aborting dealer operations: {}", e);
+                error!("error aborting dealer operations: {e}");
             }
         }
     }
@@ -524,13 +524,13 @@ async fn connect(
                 Ok(close_frame) => ws_tx.send(WsMessage::Close(close_frame)).await,
                 Err(WsError::AlreadyClosed) | Err(WsError::ConnectionClosed) => ws_tx.flush().await,
                 Err(e) => {
-                    warn!("Dealer finished with an error: {}", e);
+                    warn!("Dealer finished with an error: {e}");
                     ws_tx.send(WsMessage::Close(None)).await
                 }
             };
 
             if let Err(e) = result {
-                warn!("Error while closing websocket: {}", e);
+                warn!("Error while closing websocket: {e}");
             }
 
             debug!("Dropping send task");
@@ -565,7 +565,7 @@ async fn connect(
                         _ => (), // tungstenite handles Close and Ping automatically
                     },
                     Some(Err(e)) => {
-                        warn!("Websocket connection failed: {}", e);
+                        warn!("Websocket connection failed: {e}");
                         break;
                     }
                     None => {
@@ -586,7 +586,10 @@ async fn connect(
                 timer.tick().await;
 
                 pong_received.store(false, atomic::Ordering::Relaxed);
-                if send_tx.send(WsMessage::Ping(vec![])).is_err() {
+                if send_tx
+                    .send(WsMessage::Ping(bytes::Bytes::default()))
+                    .is_err()
+                {
                     // The sender is closed.
                     break;
                 }
@@ -645,13 +648,13 @@ where
                     () = shared.closed() => break,
                     r = t0 => {
                         if let Err(e) = r {
-                            error!("timeout on task 0: {}", e);
+                            error!("timeout on task 0: {e}");
                         }
                         tasks.0.take();
                     },
                     r = t1 => {
                         if let Err(e) = r {
-                            error!("timeout on task 1: {}", e);
+                            error!("timeout on task 1: {e}");
                         }
                         tasks.1.take();
                     }
@@ -668,7 +671,7 @@ where
                 match connect(&url, proxy.as_ref(), &shared).await {
                     Ok((s, r)) => tasks = (init_task(s), init_task(r)),
                     Err(e) => {
-                        error!("Error while connecting: {}", e);
+                        error!("Error while connecting: {e}");
                         tokio::time::sleep(RECONNECT_INTERVAL).await;
                     }
                 }

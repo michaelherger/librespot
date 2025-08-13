@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
@@ -18,7 +19,6 @@ use hyper_util::{
     rt::TokioExecutor,
 };
 use nonzero_ext::nonzero;
-use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use thiserror::Error;
 use url::Url;
@@ -94,7 +94,7 @@ type HyperClient = Client<ProxyConnector<HttpsConnector<HttpConnector>>, Full<by
 pub struct HttpClient {
     user_agent: HeaderValue,
     proxy_url: Option<Url>,
-    hyper_client: OnceCell<HyperClient>,
+    hyper_client: OnceLock<HyperClient>,
 
     // while the DashMap variant is more performant, our level of concurrency
     // is pretty low so we can save pulling in that extra dependency
@@ -124,7 +124,7 @@ impl HttpClient {
         );
 
         let user_agent = HeaderValue::from_str(user_agent_str).unwrap_or_else(|err| {
-            error!("Invalid user agent <{}>: {}", user_agent_str, err);
+            error!("Invalid user agent <{user_agent_str}>: {err}");
             HeaderValue::from_static(FALLBACK_USER_AGENT)
         });
 
@@ -138,22 +138,20 @@ impl HttpClient {
         Self {
             user_agent,
             proxy_url: proxy_url.cloned(),
-            hyper_client: OnceCell::new(),
+            hyper_client: OnceLock::new(),
             rate_limiter,
         }
     }
 
     fn try_create_hyper_client(proxy_url: Option<&Url>) -> Result<HyperClient, Error> {
         // configuring TLS is expensive and should be done once per process
+        let _ = rustls::crypto::ring::default_provider()
+            .install_default()
+            .map_err(|e| {
+                Error::internal(format!("unable to install default crypto provider: {e:?}"))
+            });
 
-        // On supported platforms, use native roots
-        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-        let tls = HttpsConnectorBuilder::new().with_native_roots()?;
-
-        // Otherwise, use webpki roots
-        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         let tls = HttpsConnectorBuilder::new().with_webpki_roots();
-
         let https_connector = tls.https_or_http().enable_http1().enable_http2().build();
 
         // When not using a proxy a dummy proxy is configured that will not intercept any traffic.
@@ -170,13 +168,13 @@ impl HttpClient {
         Ok(client)
     }
 
-    fn hyper_client(&self) -> Result<&HyperClient, Error> {
+    fn hyper_client(&self) -> &HyperClient {
         self.hyper_client
-            .get_or_try_init(|| Self::try_create_hyper_client(self.proxy_url.as_ref()))
+            .get_or_init(|| Self::try_create_hyper_client(self.proxy_url.as_ref()).unwrap())
     }
 
     pub async fn request(&self, req: Request<Bytes>) -> Result<Response<Incoming>, Error> {
-        debug!("Requesting {}", req.uri().to_string());
+        debug!("Requesting {}", req.uri());
 
         // `Request` does not implement `Clone` because its `Body` may be a single-shot stream.
         // As correct as that may be technically, we now need all this boilerplate to clone it
@@ -253,7 +251,7 @@ impl HttpClient {
             ))
         })?;
 
-        Ok(self.hyper_client()?.request(req.map(Full::new)))
+        Ok(self.hyper_client().request(req.map(Full::new)))
     }
 
     pub fn get_retry_after(headers: &HeaderMap<HeaderValue>) -> Option<Duration> {
