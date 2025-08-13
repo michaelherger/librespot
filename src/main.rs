@@ -1,14 +1,3 @@
-use std::{
-    env,
-    fs::create_dir_all,
-    ops::RangeInclusive,
-    path::{Path, PathBuf},
-    pin::Pin,
-    process::exit,
-    str::FromStr,
-    time::{Duration, Instant},
-};
-
 #[cfg(feature = "spotty")]
 use librespot::playback::mixer::softmixer::SoftMixer;
 
@@ -49,6 +38,16 @@ const NULLDEVICE: &str = "/dev/null";
 use librespot_oauth::OAuthClientBuilder;
 use log::{debug, error, info, trace, warn};
 use sha1::{Digest, Sha1};
+use std::{
+    env,
+    fs::create_dir_all,
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+    pin::Pin,
+    process::exit,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 use sysinfo::{ProcessesToUpdate, System};
 use thiserror::Error;
 use url::Url;
@@ -311,6 +310,7 @@ fn get_setup() -> Setup {
     const VERSION: &str = "version";
     const VOLUME_CTRL: &str = "volume-ctrl";
     const VOLUME_RANGE: &str = "volume-range";
+    const VOLUME_STEPS: &str = "volume-steps";
     const ZEROCONF_PORT: &str = "zeroconf-port";
     const ZEROCONF_INTERFACE: &str = "zeroconf-interface";
     const ZEROCONF_BACKEND: &str = "zeroconf-backend";
@@ -326,6 +326,7 @@ fn get_setup() -> Setup {
     const DEVICE_SHORT: &str = "d";
     const VOLUME_CTRL_SHORT: &str = "E";
     const VOLUME_RANGE_SHORT: &str = "e";
+    const VOLUME_STEPS_SHORT: &str = ""; // no short flag
     const DEVICE_TYPE_SHORT: &str = "F";
     const FORMAT_SHORT: &str = "f";
     const DISABLE_AUDIO_CACHE_SHORT: &str = "G";
@@ -406,6 +407,8 @@ fn get_setup() -> Setup {
     #[cfg(not(feature = "alsa-backend"))]
     const VOLUME_RANGE_DESC: &str =
         "Range of the volume control (dB) from 0.0 to 100.0. Defaults to 60.0.";
+    const VOLUME_STEPS_DESC: &str =
+        "Number of incremental steps when responding to volume control updates. Defaults to 64.";
 
     // Spotty
     const AUTHENTICATE: &str = "authenticate";
@@ -619,6 +622,12 @@ fn get_setup() -> Setup {
         VOLUME_RANGE,
         VOLUME_RANGE_DESC,
         "RANGE",
+    )
+    .optopt(
+        VOLUME_STEPS_SHORT,
+        VOLUME_STEPS,
+        VOLUME_STEPS_DESC,
+        "STEPS",
     )
     .optopt(
         NORMALISATION_METHOD_SHORT,
@@ -1383,8 +1392,7 @@ fn get_setup() -> Setup {
         Some("we don't need discovery in spotty mode".to_owned())
     } else if opt_present(DISABLE_DISCOVERY) {
         Some(format!(
-            "the `--{}` / `-{}` flag set",
-            DISABLE_DISCOVERY, DISABLE_DISCOVERY_SHORT,
+            "the `--{DISABLE_DISCOVERY}` / `-{DISABLE_DISCOVERY_SHORT}` flag set",
         ))
     } else {
         None
@@ -1624,7 +1632,8 @@ fn get_setup() -> Setup {
                 } else {
                     cache.as_ref().and_then(Cache::volume)
                 }
-            });
+            })
+            .unwrap_or_default();
 
         let device_type = opt_str(DEVICE_TYPE)
             .as_deref()
@@ -1647,23 +1656,34 @@ fn get_setup() -> Setup {
             })
             .unwrap_or_default();
 
+        let volume_steps = opt_str(VOLUME_STEPS)
+            .map(|steps| match steps.parse::<u16>() {
+                Ok(value) => value,
+                _ => {
+                    let default_value = &connect_default_config.volume_steps.to_string();
+
+                    invalid_error_msg(
+                        VOLUME_STEPS,
+                        VOLUME_STEPS_SHORT,
+                        &steps,
+                        "a positive whole number <= 65535",
+                        default_value,
+                    );
+
+                    exit(1);
+                }
+            })
+            .unwrap_or_else(|| connect_default_config.volume_steps);
+
         let is_group = opt_present(DEVICE_IS_GROUP);
 
-        if let Some(initial_volume) = initial_volume {
-            ConnectConfig {
-                name,
-                device_type,
-                is_group,
-                initial_volume,
-                ..Default::default()
-            }
-        } else {
-            ConnectConfig {
-                name,
-                device_type,
-                is_group,
-                ..Default::default()
-            }
+        ConnectConfig {
+            name,
+            device_type,
+            is_group,
+            initial_volume,
+            volume_steps,
+            ..connect_default_config
         }
     };
 
@@ -1968,6 +1988,7 @@ fn get_setup() -> Setup {
             normalisation_release_cf,
             normalisation_knee_db,
             ditherer,
+            position_update_interval: None,
             #[cfg(feature = "spotty")]
             lms_connect_mode: !opt_present(SINGLE_TRACK),
         }
@@ -2175,7 +2196,13 @@ async fn main() {
     }
 
     let mixer_config = setup.mixer_config.clone();
-    let mixer = (setup.mixer)(mixer_config);
+    let mixer = match (setup.mixer)(mixer_config) {
+        Ok(mixer) => mixer,
+        Err(why) => {
+            error!("{why}");
+            exit(1)
+        }
+    };
     let player_config = setup.player_config.clone();
 
     let soft_volume = mixer.get_soft_volume();

@@ -144,6 +144,9 @@ pub struct PlayerConfig {
     // pass function pointers so they can be lazily instantiated *after* spawning a thread
     // (thereby circumventing Send bounds that they might not satisfy)
     pub ditherer: Option<DithererBuilder>,
+    /// Setting this will enable periodically sending events during playback informing about the playback position
+    /// To consume the PlayerEvent::PositionChanged event, listen to events via `Player::get_player_event_channel()``
+    pub position_update_interval: Option<Duration>,
 
     #[cfg(feature = "spotty")]
     pub lms_connect_mode: bool,
@@ -164,6 +167,7 @@ impl Default for PlayerConfig {
             normalisation_knee_db: 5.0,
             passthrough: false,
             ditherer: Some(mk_ditherer::<TriangularDitherer>),
+            position_update_interval: None,
 
             #[cfg(feature = "spotty")]
             lms_connect_mode: false,
