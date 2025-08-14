@@ -7,8 +7,8 @@ use std::{
     pin::Pin,
     process::exit,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
     thread,
@@ -16,8 +16,8 @@ use std::{
 };
 
 use futures_util::{
-    future, future::FusedFuture, stream::futures_unordered::FuturesUnordered, StreamExt,
-    TryFutureExt,
+    StreamExt, TryFutureExt, future, future::FusedFuture,
+    stream::futures_unordered::FuturesUnordered,
 };
 use parking_lot::Mutex;
 use symphonia::core::io::MediaSource;
@@ -28,7 +28,7 @@ use crate::{
     audio_backend::Sink,
     config::{Bitrate, NormalisationMethod, NormalisationType, PlayerConfig},
     convert::Converter,
-    core::{util::SeqGenerator, Error, Session, SpotifyId},
+    core::{Error, Session, SpotifyId, util::SeqGenerator},
     decoder::{AudioDecoder, AudioPacket, AudioPacketPosition, SymphoniaDecoder},
     metadata::audio::{AudioFileFormat, AudioFiles, AudioItem},
     mixer::VolumeGetter,
@@ -279,10 +279,12 @@ impl PlayerEvent {
 
 pub type PlayerEventChannel = mpsc::UnboundedReceiver<PlayerEvent>;
 
+#[inline]
 pub fn db_to_ratio(db: f64) -> f64 {
     f64::powf(10.0, db / DB_VOLTAGE_RATIO)
 }
 
+#[inline]
 pub fn ratio_to_db(ratio: f64) -> f64 {
     ratio.log10() * DB_VOLTAGE_RATIO
 }
@@ -1115,7 +1117,9 @@ impl PlayerTrackLoader {
             // If the position is invalid just start from
             // the beginning of the track.
             let position_ms = if position_ms > duration_ms {
-                warn!("Invalid start position of {position_ms} ms exceeds track's duration of {duration_ms} ms, starting track from the beginning");
+                warn!(
+                    "Invalid start position of {position_ms} ms exceeds track's duration of {duration_ms} ms, starting track from the beginning"
+                );
                 0
             } else {
                 position_ms
@@ -1351,7 +1355,9 @@ impl Future for PlayerInternal {
                                             }
                                         }
                                         Err(e) => {
-                                            error!("Skipping to next track, unable to decode samples for track <{track_id:?}>: {e:?}");
+                                            error!(
+                                                "Skipping to next track, unable to decode samples for track <{track_id:?}>: {e:?}"
+                                            );
                                             self.send_event(PlayerEvent::EndOfTrack {
                                                 track_id,
                                                 play_request_id,
@@ -1364,7 +1370,9 @@ impl Future for PlayerInternal {
                             self.handle_packet(result, normalisation_factor);
                         }
                         Err(e) => {
-                            error!("Skipping to next track, unable to get next packet for track <{track_id:?}>: {e:?}");
+                            error!(
+                                "Skipping to next track, unable to get next packet for track <{track_id:?}>: {e:?}"
+                            );
                             self.send_event(PlayerEvent::EndOfTrack {
                                 track_id,
                                 play_request_id,
@@ -1821,7 +1829,10 @@ impl PlayerInternal {
                 let mut loaded_track = match mem::replace(&mut self.state, PlayerState::Invalid) {
                     PlayerState::EndOfTrack { loaded_track, .. } => loaded_track,
                     _ => {
-                        return Err(Error::internal(format!("PlayerInternal::handle_command_load repeating the same track: invalid state: {:?}", self.state)));
+                        return Err(Error::internal(format!(
+                            "PlayerInternal::handle_command_load repeating the same track: invalid state: {:?}",
+                            self.state
+                        )));
                     }
                 };
 
@@ -1832,7 +1843,10 @@ impl PlayerInternal {
                 self.preload = PlayerPreload::None;
                 self.start_playback(track_id, play_request_id, loaded_track, play);
                 if let PlayerState::Invalid = self.state {
-                    return Err(Error::internal(format!("PlayerInternal::handle_command_load repeating the same track: start_playback() did not transition to valid player state: {:?}", self.state)));
+                    return Err(Error::internal(format!(
+                        "PlayerInternal::handle_command_load repeating the same track: start_playback() did not transition to valid player state: {:?}",
+                        self.state
+                    )));
                 }
                 return Ok(());
             }
@@ -1901,12 +1915,18 @@ impl PlayerInternal {
                     self.start_playback(track_id, play_request_id, loaded_track, play);
 
                     if let PlayerState::Invalid = self.state {
-                        return Err(Error::internal(format!("PlayerInternal::handle_command_load already playing this track: start_playback() did not transition to valid player state: {:?}", self.state)));
+                        return Err(Error::internal(format!(
+                            "PlayerInternal::handle_command_load already playing this track: start_playback() did not transition to valid player state: {:?}",
+                            self.state
+                        )));
                     }
 
                     return Ok(());
                 } else {
-                    return Err(Error::internal(format!("PlayerInternal::handle_command_load already playing this track: invalid state: {:?}", self.state)));
+                    return Err(Error::internal(format!(
+                        "PlayerInternal::handle_command_load already playing this track: invalid state: {:?}",
+                        self.state
+                    )));
                 }
             }
         }
@@ -1931,7 +1951,10 @@ impl PlayerInternal {
                     self.start_playback(track_id, play_request_id, *loaded_track, play);
                     return Ok(());
                 } else {
-                    return Err(Error::internal(format!("PlayerInternal::handle_command_loading preloaded track: invalid state: {:?}", self.state)));
+                    return Err(Error::internal(format!(
+                        "PlayerInternal::handle_command_loading preloaded track: invalid state: {:?}",
+                        self.state
+                    )));
                 }
             }
         }
@@ -2187,7 +2210,9 @@ impl PlayerInternal {
                     } = self.state
                     {
                         if is_explicit {
-                            warn!("Currently loaded track is explicit, which client setting forbids -- skipping to next track.");
+                            warn!(
+                                "Currently loaded track is explicit, which client setting forbids -- skipping to next track."
+                            );
                             self.send_event(PlayerEvent::EndOfTrack {
                                 track_id,
                                 play_request_id,
