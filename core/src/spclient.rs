@@ -753,21 +753,6 @@ impl SpClient {
         U: TryInto<Uri>,
         <U as TryInto<Uri>>::Error: Into<http::Error>,
     {
-        // don't understand yet why this is needed, but it is...
-        // https://github.com/librespot-org/librespot/discussions/1533
-        #[cfg(feature = "spotty")]
-        let uri: Uri = cdn_url.try_into().map_err(Into::into)?;
-        #[cfg(feature = "spotty")]
-        let req = Request::builder()
-            .method(&Method::GET)
-            .uri(uri)
-            .header(
-                RANGE,
-                HeaderValue::from_str(&format!("bytes={}-{}", offset, offset + length - 1))?,
-            )
-            .body(Bytes::new())?;
-
-        #[cfg(not(feature = "spotty"))]
         let req = Request::builder()
             .method(&Method::GET)
             .uri(cdn_url)
