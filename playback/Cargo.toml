@@ -1,26 +1,58 @@
 [package]
 name = "librespot-playback"
-version = "0.6.0-dev"
+version.workspace = true
 rust-version.workspace = true
 authors = ["Sasha Hilton <sashahilton00@gmail.com>"]
+license.workspace = true
 description = "The audio playback logic for librespot"
-license = "MIT"
-repository = "https://github.com/librespot-org/librespot"
-edition = "2021"
+repository.workspace = true
+edition.workspace = true
 
-[dependencies.librespot-audio]
-path = "../audio"
-version = "0.6.0-dev"
+[features]
+# Refer to the workspace Cargo.toml for the list of features
+default = ["rustls-tls-webpki-roots", "passthrough-decoder", "spotty"]
 
-[dependencies.librespot-core]
-path = "../core"
-version = "0.6.0-dev"
+# Audio backends
+alsa-backend = ["dep:alsa"]
+gstreamer-backend = [
+    "dep:gstreamer",
+    "dep:gstreamer-app",
+    "dep:gstreamer-audio",
+]
+jackaudio-backend = ["dep:jack"]
+portaudio-backend = ["dep:portaudio-rs"]
+pulseaudio-backend = ["dep:libpulse-binding", "dep:libpulse-simple-binding"]
+rodio-backend = ["dep:cpal", "dep:rodio"]
+rodiojack-backend = ["dep:rodio", "cpal/jack"]
+sdl-backend = ["dep:sdl2"]
 
-[dependencies.librespot-metadata]
-path = "../metadata"
-version = "0.6.0-dev"
+# Audio processing features
+passthrough-decoder = ["dep:ogg"]
+
+# TLS backend propagation
+native-tls = [
+    "librespot-core/native-tls",
+    "librespot-audio/native-tls",
+    "librespot-metadata/native-tls",
+]
+rustls-tls-native-roots = [
+    "librespot-core/rustls-tls-native-roots",
+    "librespot-audio/rustls-tls-native-roots",
+    "librespot-metadata/rustls-tls-native-roots",
+]
+rustls-tls-webpki-roots = [
+    "librespot-core/rustls-tls-webpki-roots",
+    "librespot-audio/rustls-tls-webpki-roots",
+    "librespot-metadata/rustls-tls-webpki-roots",
+]
+
+spotty = []
 
 [dependencies]
+librespot-audio = { version = "0.7.0", path = "../audio", default-features = false }
+librespot-core = { version = "0.7.0", path = "../core", default-features = false }
+librespot-metadata = { version = "0.7.0", path = "../metadata", default-features = false }
+
 portable-atomic = "1"
 futures-util = "0.3"
 log = "0.4"
@@ -37,21 +69,24 @@ zerocopy = { version = "0.8", features = ["derive"] }
 
 # Backends
 alsa = { version = "0.9", optional = true }
-portaudio-rs = { version = "0.3", optional = true }
-libpulse-binding = { version = "2", optional = true, default-features = false }
-libpulse-simple-binding = { version = "2", optional = true, default-features = false }
 jack = { version = "0.13", optional = true }
+portaudio-rs = { version = "0.3", optional = true }
 sdl2 = { version = "0.38", optional = true }
+
+# GStreamer dependencies
 gstreamer = { version = "0.24", optional = true }
 gstreamer-app = { version = "0.24", optional = true }
 gstreamer-audio = { version = "0.24", optional = true }
-glib = { version = "0.21", optional = true }
+
+# PulseAudio dependencies
+libpulse-binding = { version = "2", optional = true, default-features = false }
+libpulse-simple-binding = { version = "2", optional = true, default-features = false }
 
 # Rodio dependencies
+cpal = { version = "0.16", optional = true }
 rodio = { version = "0.21", optional = true, default-features = false, features = [
     "playback",
 ] }
-cpal = { version = "0.16", optional = true }
 
 # Container and audio decoder
 symphonia = { version = "0.5", default-features = false, features = [
@@ -66,17 +101,3 @@ ogg = { version = "0.9", optional = true }
 # Dithering
 rand = { version = "0.9", features = ["small_rng"] }
 rand_distr = "0.5"
-
-[features]
-alsa-backend = ["alsa"]
-portaudio-backend = ["portaudio-rs"]
-pulseaudio-backend = ["libpulse-binding", "libpulse-simple-binding"]
-jackaudio-backend = ["jack"]
-rodio-backend = ["rodio", "cpal"]
-rodiojack-backend = ["rodio", "cpal/jack"]
-sdl-backend = ["sdl2"]
-gstreamer-backend = ["gstreamer", "gstreamer-app", "gstreamer-audio"]
-spotty = []
-
-passthrough-decoder = ["ogg"]
-default = ["passthrough-decoder", "spotty"]

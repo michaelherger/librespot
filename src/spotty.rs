@@ -1,7 +1,7 @@
 #[allow(unused)]
 use log::{error, info, warn};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::process::exit;
 
@@ -19,6 +19,8 @@ const DEBUGMODE: bool = true;
 #[cfg(not(debug_assertions))]
 const DEBUGMODE: bool = false;
 
+pub const VERSION: &str = "1.9.99";
+
 pub fn check(version_info: String) {
     println!("ok {}", version_info);
 
@@ -32,7 +34,7 @@ pub fn check(version_info: String) {
         "podcasts": true,
         "save-token": true,
         "temp-dir": true,
-        "version": env!("CARGO_PKG_VERSION").to_string(),
+        "version": VERSION,
         "volume-normalisation": true,
         "zeroconf-port": true
     });

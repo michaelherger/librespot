@@ -27,8 +27,6 @@ use librespot::{
 #[cfg(feature = "spotty")]
 mod spotty;
 
-const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " v", env!("CARGO_PKG_VERSION"));
-
 #[cfg(all(target_os = "windows", feature = "spotty"))]
 const NULLDEVICE: &str = "NUL";
 #[cfg(all(not(target_os = "windows"), feature = "spotty"))]
@@ -183,8 +181,9 @@ fn get_version_string() -> String {
     const BUILD_PROFILE: &str = "release";
 
     format!(
-        "{spottyvers} - using librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id}, Profile: {build_profile})",
-        spottyvers = VERSION,
+        "{spotty} v{spottyvers} - using librespot {semver} {sha} (Built on {build_date}, Build ID: {build_id}, Profile: {build_profile})",
+        spotty = concat!(env!("CARGO_PKG_NAME")),
+        spottyvers = spotty::VERSION,
         semver = version::SEMVER,
         sha = version::SHA_SHORT,
         build_date = version::BUILD_DATE,
