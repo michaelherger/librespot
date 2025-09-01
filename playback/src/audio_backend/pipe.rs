@@ -37,10 +37,26 @@ impl From<StdoutError> for SinkError {
     fn from(e: StdoutError) -> SinkError {
         use StdoutError::*;
         let es = e.to_string();
+        #[cfg(not(feature = "spotty"))]
         match e {
             FlushFailure(_) | OnWrite(_) => SinkError::OnWrite(es),
             OpenFailure { .. } => SinkError::ConnectionRefused(es),
             NoOutput => SinkError::NotConnected(es),
+        }
+        #[cfg(feature = "spotty")]
+        match e {
+            FlushFailure(_) | OnWrite(_) => {
+                SinkError::OnWrite(es);
+                exit(0);
+            }
+            OpenFailure { .. } => {
+                SinkError::ConnectionRefused(es);
+                exit(0);
+            }
+            NoOutput => {
+                SinkError::NotConnected(es);
+                exit(0);
+            }
         }
     }
 }
@@ -99,6 +115,9 @@ impl Sink for StdoutSink {
             .flush()
             .map_err(StdoutError::FlushFailure)?;
 
+        #[cfg(feature = "spotty")]
+        exit(0);
+        #[cfg(not(feature = "spotty"))]
         Ok(())
     }
 
