@@ -56,6 +56,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "alsa"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c88dbbce13b232b26250e1e2e6ac18b6a891a646b8148285036ebce260ac5c3"
+dependencies = [
+ "alsa-sys",
+ "bitflags 2.9.3",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "alsa-sys"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -405,7 +417,7 @@ version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cbd307f43cc2a697e2d1f8bc7a1d824b5269e052209e28883e5bc04d095aaa3f"
 dependencies = [
- "alsa",
+ "alsa 0.9.2",
  "coreaudio-rs",
  "dasp_sample",
  "jack",
@@ -1833,7 +1845,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-audio"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "aes",
  "bytes",
@@ -1852,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-connect"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "futures-util",
  "librespot-core",
@@ -1870,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "aes",
  "base64",
@@ -1927,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-discovery"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "aes",
  "base64",
@@ -1958,7 +1970,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-metadata"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1974,7 +1986,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-oauth"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "env_logger",
  "log",
@@ -1988,9 +2000,9 @@ dependencies = [
 
 [[package]]
 name = "librespot-playback"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
- "alsa",
+ "alsa 0.10.0",
  "cpal",
  "futures-util",
  "gstreamer",
@@ -2020,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "librespot-protocol"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "protobuf",
  "protobuf-codegen",
@@ -3494,7 +3506,7 @@ dependencies = [
 
 [[package]]
 name = "spotty"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "data-encoding",
  "env_logger",

@@ -49,9 +49,9 @@ rustls-tls-webpki-roots = [
 spotty = []
 
 [dependencies]
-librespot-audio = { version = "0.7.0", path = "../audio", default-features = false }
-librespot-core = { version = "0.7.0", path = "../core", default-features = false }
-librespot-metadata = { version = "0.7.0", path = "../metadata", default-features = false }
+librespot-audio = { version = "0.7.1", path = "../audio", default-features = false }
+librespot-core = { version = "0.7.1", path = "../core", default-features = false }
+librespot-metadata = { version = "0.7.1", path = "../metadata", default-features = false }
 
 portable-atomic = "1"
 futures-util = "0.3"
@@ -68,7 +68,7 @@ tokio = { version = "1", features = [
 zerocopy = { version = "0.8", features = ["derive"] }
 
 # Backends
-alsa = { version = "0.9", optional = true }
+alsa = { version = "0.10", optional = true }
 jack = { version = "0.13", optional = true }
 portaudio-rs = { version = "0.3", optional = true }
 sdl2 = { version = "0.38", optional = true }
