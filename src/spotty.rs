@@ -19,7 +19,7 @@ const DEBUGMODE: bool = true;
 #[cfg(not(debug_assertions))]
 const DEBUGMODE: bool = false;
 
-pub const VERSION: &str = "1.9.99";
+pub const VERSION: &str = "2.0.0";
 
 pub fn check(version_info: String) {
     println!("ok {}", version_info);
