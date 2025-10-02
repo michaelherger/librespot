@@ -11,7 +11,7 @@ env:
 
 jobs:
   macOS:
-    runs-on: macos-13
+    runs-on: macos-15
 
     steps:
     - name: Checkout
@@ -24,14 +24,14 @@ jobs:
         contents: ${{ env.KEYMASTER_CLIENT_ID }}
         write-mode: overwrite
 
-    - name: Install Rust support for ARM64 & prepare environment
+    - name: Install Rust support for x86_64 & prepare environment
       run: |
-        rustup target add aarch64-apple-darwin
+        rustup target add x86_64-apple-darwin
         mkdir releases
 
     - name: Build
       run: |
-        cargo build --release
+        cargo build --target=x86_64-apple-darwin --release
         cargo build --target=aarch64-apple-darwin --release
 
     - name: Build fat binary
