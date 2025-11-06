@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) since v0.2.0.
 
+## [Unreleased]
+
+### Added
+
+- [core] Add `SpotifyUri` type to represent more types of URI than `SpotifyId` can
+
+### Changed
+
+- [playback] Changed type of `SpotifyId` fields in `PlayerEvent` members to `SpotifyUri` (breaking)
+- [metadata] Changed arguments for `Metadata` trait from `&SpotifyId` to `&SpotifyUri` (breaking)
+- [player] `load` function changed from accepting a `SpotifyId` to accepting a `SpotifyUri` (breaking)
+- [player] `preload` function changed from accepting a `SpotifyId` to accepting a `SpotifyUri` (breaking)
+- [core] `get_radio_for_track` function changed from accepting a `SpotifyId` to accepting a `SpotifyUri` (breaking)
+- [core] Changed return type of `get_extended_metadata` to return `BatchedExtensionResponse` (breaking)
+- [core] Changed parameter of `get_<item>_metadata` from `SpotifyId` to `SpotifyUri` (breaking)
+
+### Fixed
+
+- [core] Fixed a problem where the metadata didn't include the audio file by switching to `get_extended_metadata`
+
+### Removed
+
+- [core] Removed `SpotifyItemType` enum; the new `SpotifyUri` is an enum over all item types and so which variant it is 
+  describes its item type (breaking)
+- [core] Removed `NamedSpotifyId` struct; it was made obsolete by `SpotifyUri` (breaking)
+- [core] The following methods have been removed from `SpotifyId` and moved to `SpotifyUri` (breaking):
+  - `is_playable`
+  - `from_uri`
+  - `to_uri`
+
 ## [v0.7.1] - 2025-08-31
 
 ### Changed

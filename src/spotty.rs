@@ -7,7 +7,7 @@ use std::process::exit;
 
 use librespot::core::authentication::Credentials;
 use librespot::core::session::Session;
-use librespot::core::spotify_id::SpotifyId;
+use librespot::core::spotify_uri::SpotifyUri;
 
 use librespot::playback::audio_backend;
 use librespot::playback::config::{AudioFormat, PlayerConfig};
@@ -109,7 +109,7 @@ pub async fn play_track(
             let backend = audio_backend::find(None).unwrap();
             let audio_format = AudioFormat::default();
 
-            let track = SpotifyId::from_uri(
+            let track = SpotifyUri::from_uri(
                 track_id
                     .replace("spotty://", "spotify:track:")
                     .replace("://", ":")
