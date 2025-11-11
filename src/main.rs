@@ -316,6 +316,7 @@ async fn get_setup() -> Setup {
     const ZEROCONF_PORT: &str = "zeroconf-port";
     const ZEROCONF_INTERFACE: &str = "zeroconf-interface";
     const ZEROCONF_BACKEND: &str = "zeroconf-backend";
+    const LOCAL_FILE_DIR: &str = "local-file-dir";
 
     // Mostly arbitrary.
     const AP_PORT_SHORT: &str = "a";
@@ -368,6 +369,7 @@ async fn get_setup() -> Setup {
     const NORMALISATION_THRESHOLD_SHORT: &str = "Z";
     const ZEROCONF_PORT_SHORT: &str = "z";
     const ZEROCONF_BACKEND_SHORT: &str = ""; // no short flag
+    const LOCAL_FILE_DIR_SHORT: &str = "l";
 
     // Options that have different descriptions
     // depending on what backends were enabled at build time.
@@ -708,6 +710,11 @@ async fn get_setup() -> Setup {
         ZEROCONF_BACKEND,
         "Zeroconf (MDNS/DNS-SD) backend to use. Valid values are 'avahi', 'dns-sd' and 'libmdns', if librespot is compiled with the corresponding feature flags.",
         "BACKEND"
+    ).optmulti(
+        LOCAL_FILE_DIR_SHORT,
+        LOCAL_FILE_DIR,
+        "Directory to search for local file playback. Can be specified multiple times to add multiple search directories",
+        "DIRECTORY"
     );
 
     #[cfg(feature = "passthrough-decoder")]
@@ -717,7 +724,7 @@ async fn get_setup() -> Setup {
         "Pass a raw stream to the output. Only works with the pipe and subprocess backends.",
     );
 
-    // Spotty
+    #[cfg(feature = "spotty")]
     opts.optflag(
         "",
         AUTHENTICATE,
@@ -1545,6 +1552,12 @@ async fn get_setup() -> Setup {
         })
     });
 
+    let local_file_directories = matches
+        .opt_strs(LOCAL_FILE_DIR)
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+
     let connect_config = {
         let connect_default_config = ConnectConfig::default();
 
@@ -1989,6 +2002,7 @@ async fn get_setup() -> Setup {
             normalisation_knee_db,
             ditherer,
             position_update_interval: None,
+            local_file_directories,
         }
     };
 

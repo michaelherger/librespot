@@ -12,7 +12,6 @@ name: build
       - "LICENSE"
       - "*.sh"
       - "**/Dockerfile*"
-      - "publish.sh"
       - "test.sh"
   pull_request:
     paths-ignore:
@@ -22,7 +21,6 @@ name: build
       - "LICENSE"
       - "*.sh"
       - "**/Dockerfile*"
-      - "publish.sh"
       - "test.sh"
   schedule:
     # Run CI every week
@@ -88,6 +86,13 @@ jobs:
           cargo hack check -p librespot --each-feature --exclude-all-features
           --include-features rustls-tls-native-roots
           --exclude-features native-tls,rustls-tls-webpki-roots
+
+      - name: Check discovery features (Linux only)
+        if: runner.os == 'Linux'
+        run: >
+          cargo hack check -p librespot-discovery --each-feature --exclude-all-features
+          --include-features native-tls
+          --exclude-features rustls-tls-native-roots,rustls-tls-webpki-roots
 
       - name: Build binary with default features
         run: cargo build --frozen

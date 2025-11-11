@@ -1,5 +1,5 @@
 use crate::{
-    core::{Error, SpotifyId},
+    core::{Error, SpotifyId, SpotifyUri},
     protocol::{
         context::Context,
         context_page::ContextPage,
@@ -446,11 +446,13 @@ impl ConnectState {
         provider: Option<Provider>,
     ) -> Result<ProvidedTrack, Error> {
         let id = match (ctx_track.uri.as_ref(), ctx_track.gid.as_ref()) {
-            (Some(uri), _) if uri.contains(['?', '%']) => {
+            (Some(uri), _) if uri.contains(['?']) => {
                 Err(StateError::InvalidTrackUri(Some(uri.clone())))?
             }
-            (Some(uri), _) if !uri.is_empty() => SpotifyId::from_uri(uri)?,
-            (_, Some(gid)) if !gid.is_empty() => SpotifyId::from_raw(gid)?,
+            (Some(uri), _) if !uri.is_empty() => SpotifyUri::from_uri(uri)?,
+            (_, Some(gid)) if !gid.is_empty() => SpotifyUri::Track {
+                id: SpotifyId::from_raw(gid)?,
+            },
             _ => Err(StateError::InvalidTrackUri(None))?,
         };
 

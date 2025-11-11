@@ -1,6 +1,6 @@
 [package]
 name = "librespot-protocol"
-version.workspace = true
+version = "0.8.0"
 rust-version.workspace = true
 authors = ["Paul Liétar <paul@lietar.net>"]
 license.workspace = true
