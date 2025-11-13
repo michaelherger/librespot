@@ -31,8 +31,8 @@ jobs:
 
     - name: Build
       run: |
-        cargo build --target=x86_64-apple-darwin --release
-        cargo build --target=aarch64-apple-darwin --release
+        cargo build --target=x86_64-apple-darwin --release --no-default-features --features native-tls,spotty,with-libmdns
+        cargo build --target=aarch64-apple-darwin --release --no-default-features --features native-tls,spotty,with-libmdns
 
     - name: Build fat binary
       run: |
@@ -115,7 +115,7 @@ jobs:
         write-mode: overwrite
 
     - name: Build
-      run: cargo build --release
+      run: cargo build --release --no-default-features --features native-tls,spotty,with-libmdns
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
