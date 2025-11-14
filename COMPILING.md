@@ -198,6 +198,15 @@ cargo build --target=x86_64-apple-darwin --release
 
 The `sdk` value can vary, depending on what XCode version you're using.
 
+You can then use the `lipo` tool to create a single fat binary for both platforms:
+
+```bash
+lipo -create \
+    -arch x86_64 target/x86_64-apple-darwin/release/librespot \
+    -arch arm64 target/aarch64-apple-darwin/release/librespot \
+    -output librespot
+```
+
 ### Running
 
 Assuming you just compiled a ```debug``` build, you can run librespot with the following command:
