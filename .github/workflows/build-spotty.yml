@@ -90,7 +90,7 @@ jobs:
     - name: Build ARMv7 musl
       run: |
         ./cross build --target=armv7-unknown-linux-musleabihf $LINUX_FEATURES
-        cp target/armv7-unknown-linux-musleabihf/release/spotty releases/arm-linux/spotty-muslhf
+        cp target/armv7-unknown-linux-musleabihf/release/spotty releases/arm-linux/spotty-hf
 
     - name: Build ARM musl
       run: |
