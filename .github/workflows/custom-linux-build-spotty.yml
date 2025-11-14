@@ -34,7 +34,7 @@ jobs:
 
     - name: Build
       run: |
-        ./cross build --release --target=${{ github.event.inputs.target_triple }}
+        ./cross build --release --target=${{ github.event.inputs.target_triple }} --no-default-features --features default-linux
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
