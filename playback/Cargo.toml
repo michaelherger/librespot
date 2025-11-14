@@ -10,7 +10,7 @@ edition.workspace = true
 
 [features]
 # Refer to the workspace Cargo.toml for the list of features
-default = ["rustls-tls-webpki-roots", "passthrough-decoder", "spotty"]
+default = ["rodio-backend", "native-tls"]
 
 # Audio backends
 alsa-backend = ["dep:alsa"]

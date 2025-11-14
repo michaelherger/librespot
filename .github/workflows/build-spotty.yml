@@ -31,8 +31,8 @@ jobs:
 
     - name: Build
       run: |
-        cargo build --target=x86_64-apple-darwin --release --no-default-features --features native-tls,spotty,with-libmdns
-        cargo build --target=aarch64-apple-darwin --release --no-default-features --features native-tls,spotty,with-libmdns
+        cargo build --target=x86_64-apple-darwin --release
+        cargo build --target=aarch64-apple-darwin --release
 
     - name: Build fat binary
       run: |
@@ -49,6 +49,9 @@ jobs:
 
   Linux:
     runs-on: ubuntu-24.04
+
+    env:
+      LINUX_FEATURES: "--release --no-default-features --feature default-linux"
 
     steps:
     - name: Checkout
@@ -71,27 +74,27 @@ jobs:
 
     - name: Build i686
       run: |
-        ./cross build --release --target=i686-unknown-linux-musl
+        ./cross build --target=i686-unknown-linux-musl $LINUX_FEATURES
         cp target/i686-unknown-linux-musl/release/spotty releases/i386-linux/spotty
 
     - name: Build x86_64
       run: |
-        ./cross build --release --target=x86_64-unknown-linux-musl
+        ./cross build --target=x86_64-unknown-linux-musl $LINUX_FEATURES
         cp target/x86_64-unknown-linux-musl/release/spotty releases/i386-linux/spotty-x86_64
 
     - name: Build ARMv8
       run: |
-        ./cross build --release --target=aarch64-unknown-linux-musl
+        ./cross build --target=aarch64-unknown-linux-musl $LINUX_FEATURES
         cp target/aarch64-unknown-linux-musl/release/spotty releases/aarch64-linux/spotty
 
     - name: Build ARMv7 musl
       run: |
-        ./cross build --release --target=armv7-unknown-linux-musleabihf
+        ./cross build --target=armv7-unknown-linux-musleabihf $LINUX_FEATURES
         cp target/armv7-unknown-linux-musleabihf/release/spotty releases/arm-linux/spotty-muslhf
 
     - name: Build ARM musl
       run: |
-        ./cross build --release --target=arm-unknown-linux-musleabi
+        ./cross build --target=arm-unknown-linux-musleabi $LINUX_FEATURES
         cp target/arm-unknown-linux-musleabi/release/spotty releases/arm-linux/spotty
 
     - name: Upload artifacts
@@ -115,7 +118,7 @@ jobs:
         write-mode: overwrite
 
     - name: Build
-      run: cargo build --release --no-default-features --features native-tls,spotty,with-libmdns
+      run: cargo build --release
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4

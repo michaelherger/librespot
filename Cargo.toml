@@ -36,7 +36,8 @@ repository = "https://github.com/michaelherger/librespot"
 edition = "2024"
 
 [features]
-default = ["rustls-tls-webpki-roots", "spotty", "with-libmdns"]
+default = ["native-tls", "spotty", "with-libmdns"]
+default-linux = ["rustls-tls-webpki-roots", "spotty", "with-libmdns"]
 
 # TLS backends (mutually exclusive - compile-time checks in oauth/src/lib.rs)
 # Note: Feature validation is in oauth crate since it's compiled first in the dependency tree.
