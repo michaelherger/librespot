@@ -30,7 +30,6 @@ pub fn check(version_info: String) {
         "lms-auth": true,
         "no-ap-port": true,
         "oauth": true,
-        "ogg-direct": true,
         "podcasts": true,
         "save-token": true,
         "temp-dir": true,
@@ -38,6 +37,11 @@ pub fn check(version_info: String) {
         "volume-normalisation": true,
         "zeroconf-port": true
     });
+
+    #[cfg(feature = "passthrough-decoder")]
+    if let Value::Object(map) = &mut capabilities {
+        map.insert("ogg-direct".to_string(), json!(true));
+    }
 
     println!("{}", capabilities);
     exit(0);

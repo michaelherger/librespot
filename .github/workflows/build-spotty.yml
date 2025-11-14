@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     env:
-      LINUX_FEATURES: "--release --no-default-features --feature default-linux"
+      LINUX_FEATURES: "--release --no-default-features --features default-linux"
 
     steps:
     - name: Checkout
