@@ -253,6 +253,9 @@ struct Setup {
     client_id: Option<String>,
     get_token: bool,
     save_token: Option<String>,
+    lms: Option<String>,
+    lms_auth: Option<String>,
+    player_mac: Option<String>,
 }
 
 async fn get_setup() -> Setup {
@@ -2060,6 +2063,9 @@ async fn get_setup() -> Setup {
         } else {
             Some(client_id)
         },
+        lms: opt_str(LYRION_MUSIC_SERVER),
+        lms_auth: opt_str(LMS_AUTH),
+        player_mac: opt_str(PLAYER_MAC),
     }
 }
 
@@ -2217,9 +2223,17 @@ async fn main() {
     let player_config = setup.player_config.clone();
 
     let soft_volume = mixer.get_soft_volume();
+    #[cfg(not(feature = "spotty"))]
     let format = setup.format;
+    #[cfg(not(feature = "spotty"))]
     let backend = setup.backend;
+    #[cfg(not(feature = "spotty"))]
     let device = setup.device.clone();
+    #[cfg(feature = "spotty")]
+    let player = Player::new(player_config, session.clone(), soft_volume, move || {
+        spotty::ConnectNullSink::open(None, AudioFormat::default())
+    });
+    #[cfg(not(feature = "spotty"))]
     let player = Player::new(player_config, session.clone(), soft_volume, move || {
         (backend)(device, format)
     });
@@ -2235,6 +2249,24 @@ async fn main() {
             player.set_sink_event_callback(Some(Box::new(move |sink_status| {
                 run_program_on_sink_events(sink_status, &player_event_program)
             })));
+        }
+    }
+
+    #[cfg(feature = "spotty")]
+    {
+        let lms = spotty::LMS::new(
+            setup.lms.clone(),
+            setup.player_mac.clone(),
+            setup.lms_auth.clone(),
+        );
+        if lms.is_configured() {
+            let mut lms_events = player.get_player_event_channel();
+            tokio::spawn(async move {
+                let mut current_track: Option<String> = None;
+                while let Some(event) = lms_events.recv().await {
+                    lms.handle_player_event(&event, &mut current_track).await;
+                }
+            });
         }
     }
 
