@@ -1,3 +1,45 @@
+//! Spotty helper module.
+//!
+//! This file contains two distinct sections:
+//!
+//! 1. **Herger's Spotty functions** (`check`, `get_token`, `write_response`, `play_track`) —
+//!    used for the standalone streaming/token helpers. These are compiled when the `spotty`
+//!    Cargo feature is active (the default).
+//!
+//! 2. **LMS-Connect glue layer** (gated behind `#[cfg(feature = "lms-connect")]`) —
+//!    the JSON-RPC notification bridge that forwards librespot's `PlayerEvent` stream
+//!    into Lyrion Music Server's `spottyconnect` CLI command, plus a real-time-rate-limited
+//!    null audio sink for headless Connect-receiver mode.
+//!
+//! ## LMS-Connect architecture
+//!
+//! - [`lms_connect::LMS`] holds the wiring (LMS host, target player MAC, optional
+//!   HTTP-Basic auth) and the `suppress_next_volume` flag used to swallow the spurious
+//!   `VolumeChanged` Spotify pushes immediately after a `SessionConnected`.
+//! - [`lms_connect::ConnectNullSink`] implements the playback `Sink` trait; it discards
+//!   decoded PCM frames but pseudo-rate-limits the call site so Spirc reports realistic
+//!   playback positions back to the Spotify cloud.
+//! - [`lms_connect::LMS::handle_player_event`] consumes a `PlayerEvent` and emits a
+//!   `spottyconnect <cmd> <param1> <param2>` JSON-RPC dispatch into LMS.
+//!
+//! ## Wire vocabulary (the Phase-8 Perl handler must match)
+//!
+//! Five commands are emitted: `start`, `change`, `stop`, `volume`, `seek`.
+//! `pause` is *not* emitted — the dispatcher collapses Paused and Stopped
+//! variants into a single `stop` event, mirroring the contract that the
+//! original hansherlighed-era plugin already speaks.
+//!
+//! ## Authorship of LMS-Connect section
+//!
+//! Written from scratch against librespot-org HEAD's `PlayerEvent` API.
+//! The hansherlighed `fcdeecc` reference was read for *contract* (struct
+//! field names, event name vocabulary, suppress-next-volume semantics) but
+//! no code was byte-copied — see Phase 7 plan 04 deviation D-10.
+
+// ---------------------------------------------------------------------------
+// Herger's Spotty helpers (check / get_token / write_response / play_track)
+// ---------------------------------------------------------------------------
+
 #[allow(unused)]
 use log::{error, info, warn};
 
@@ -144,4 +186,176 @@ pub async fn play_track(
             println!("Missing credentials");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// LMS-Connect glue layer (feature = "lms-connect")
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lms-connect")]
+pub mod lms_connect {
+    use std::sync::Arc;
+    #[allow(unused_imports)]
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    // Imports below cover both this commit (struct + sink) and the next one
+    // (handle_player_event + notify). The dispatcher commit consumes them all;
+    // silencing the lint here keeps commit 2 atomic.
+    #[allow(unused_imports)]
+    use log::{info, warn};
+    #[allow(unused_imports)]
+    use serde_json::json;
+    #[allow(unused_imports)]
+    use tokio::io::AsyncWriteExt;
+    #[allow(unused_imports)]
+    use tokio::net::TcpStream;
+
+    use librespot_playback::audio_backend::{Sink, SinkResult};
+    use librespot_playback::config::AudioFormat;
+    use librespot_playback::convert::Converter;
+    use librespot_playback::decoder::AudioPacket;
+    #[allow(unused_imports)]
+    use librespot_playback::player::PlayerEvent;
+    use librespot_playback::{NUM_CHANNELS, SAMPLE_RATE};
+
+    // -------------------------------------------------------------------------
+    // LMS struct
+    // -------------------------------------------------------------------------
+
+    /// LMS-side notification target.
+    ///
+    /// `host_port` is `"<host>:<port>"` (typically `"localhost:9000"`).
+    /// `player_mac` is the colon-separated MAC of the target LMS player.
+    /// `auth` is an optional pre-base64-encoded `user:pass` string.
+    ///
+    /// `suppress_next_volume` is set the moment Spirc fires `SessionConnected`,
+    /// then consumed (cleared) on the very next `VolumeChanged`. This avoids
+    /// pushing Spotify's stored device volume back to LMS immediately after a
+    /// transfer-to-player handshake — that initial push is a Spotify-cloud
+    /// echo, not a user action, and would otherwise clobber LMS-side volume.
+    pub struct LMS {
+        pub host_port: Option<String>,
+        pub player_mac: Option<String>,
+        pub auth: Option<String>,
+        pub suppress_next_volume: Arc<AtomicBool>,
+    }
+
+    impl LMS {
+        pub fn new(
+            host_port: Option<String>,
+            player_mac: Option<String>,
+            auth: Option<String>,
+        ) -> Self {
+            Self {
+                host_port,
+                player_mac,
+                // Trim accidental whitespace/newlines from CLI-passed creds.
+                auth: auth.map(|raw| raw.trim().to_owned()),
+                suppress_next_volume: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        /// True iff both the LMS host and the player MAC have been configured.
+        /// Without either, `notify` is a no-op and the dispatcher short-circuits.
+        pub fn is_configured(&self) -> bool {
+            self.host_port.is_some() && self.player_mac.is_some()
+        }
+    }
+
+    impl Clone for LMS {
+        fn clone(&self) -> Self {
+            Self {
+                host_port: self.host_port.clone(),
+                player_mac: self.player_mac.clone(),
+                auth: self.auth.clone(),
+                // Important: clone the Arc so all clones share the same flag.
+                // The wiring spawns a Tokio task that takes ownership of one
+                // clone; the suppression flag must remain a single shared cell.
+                suppress_next_volume: Arc::clone(&self.suppress_next_volume),
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // ConnectNullSink
+    // -------------------------------------------------------------------------
+
+    /// Audio sink for headless Connect-receiver builds.
+    ///
+    /// We don't actually emit audio — LMS owns the audio path — but we still
+    /// need to *consume* librespot's decoded PCM at roughly real-time pace so
+    /// Spirc's playback-position reports stay believable. A naïve "drop every
+    /// packet immediately" sink would let the player race ahead of wall-clock
+    /// time, which makes Spotify clients (phone app, Connect API) display
+    /// nonsensical seek positions.
+    ///
+    /// The implementation tracks how many stereo frames have been consumed
+    /// since `start()` and parks the calling thread until wall-clock time has
+    /// caught up to the implied PCM duration.
+    pub struct ConnectNullSink {
+        began_at: Instant,
+        frames_consumed: u64,
+    }
+
+    impl ConnectNullSink {
+        /// Constructor matching the `SinkBuilder` signature so this can be
+        /// passed straight to `Player::new`.
+        pub fn open(_device: Option<String>, _format: AudioFormat) -> Box<dyn Sink> {
+            Box::new(Self {
+                began_at: Instant::now(),
+                frames_consumed: 0,
+            })
+        }
+    }
+
+    impl Sink for ConnectNullSink {
+        fn start(&mut self) -> SinkResult<()> {
+            // Reset the wall-clock anchor every time playback begins so the
+            // rate-limiter doesn't drift across pause/resume cycles.
+            self.began_at = Instant::now();
+            self.frames_consumed = 0;
+            Ok(())
+        }
+
+        fn stop(&mut self) -> SinkResult<()> {
+            // CRITICAL: do NOT exit() the process here. The pipe/StdoutSink
+            // backend in librespot terminates the daemon at end-of-stream;
+            // a Connect-receiver must outlive individual track stops to
+            // handle pause/resume and track changes.
+            self.frames_consumed = 0;
+            Ok(())
+        }
+
+        fn write(&mut self, packet: AudioPacket, _converter: &mut Converter) -> SinkResult<()> {
+            let AudioPacket::Samples(samples) = packet else {
+                // Raw passthrough variant — not in scope for this sink; just
+                // accept and discard. Spirc still progresses its position.
+                return Ok(());
+            };
+
+            let frames_in_packet = (samples.len() / NUM_CHANNELS as usize) as u64;
+            self.frames_consumed = self.frames_consumed.saturating_add(frames_in_packet);
+
+            // expected_ns = frames_consumed * 1e9 / SAMPLE_RATE
+            // u128 prevents overflow at multi-hour playback durations.
+            let expected_ns: u128 =
+                u128::from(self.frames_consumed) * 1_000_000_000u128 / u128::from(SAMPLE_RATE);
+            let elapsed_ns: u128 = self.began_at.elapsed().as_nanos();
+
+            if expected_ns > elapsed_ns {
+                let park_ns = (expected_ns - elapsed_ns) as u64;
+                std::thread::sleep(Duration::from_nanos(park_ns));
+            }
+            Ok(())
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // PlayerEvent dispatcher + JSON-RPC notifier — implementation lives in the
+    // next commit (07-04 task 2).
+    // -------------------------------------------------------------------------
+
+    // `handle_player_event` and `notify` (using the imports above) land in
+    // commit 3 — kept atomic so each commit reads as a single concern.
 }

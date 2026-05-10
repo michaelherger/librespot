@@ -8,3 +8,6 @@ pub use librespot_metadata as metadata;
 pub use librespot_oauth as oauth;
 pub use librespot_playback as playback;
 pub use librespot_protocol as protocol;
+
+#[cfg(feature = "lms-connect")]
+pub mod spotty;
