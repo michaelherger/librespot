@@ -253,6 +253,12 @@ struct Setup {
     client_id: Option<String>,
     get_token: bool,
     save_token: Option<String>,
+    #[cfg(feature = "lms-connect")]
+    lms: Option<String>,
+    #[cfg(feature = "lms-connect")]
+    lms_auth: Option<String>,
+    #[cfg(feature = "lms-connect")]
+    player_mac: Option<String>,
 }
 
 async fn get_setup() -> Setup {
@@ -317,6 +323,14 @@ async fn get_setup() -> Setup {
     const ZEROCONF_INTERFACE: &str = "zeroconf-interface";
     const ZEROCONF_BACKEND: &str = "zeroconf-backend";
     const LOCAL_FILE_DIR: &str = "local-file-dir";
+    #[cfg(feature = "lms-connect")]
+    const LYRION_MUSIC_SERVER: &str = "lms";
+    #[cfg(feature = "lms-connect")]
+    const LMS_AUTH: &str = "lms-auth";
+    #[cfg(feature = "lms-connect")]
+    const PLAYER_MAC: &str = "player-mac";
+    #[cfg(feature = "lms-connect")]
+    const CHECK: &str = "check";
 
     // Mostly arbitrary.
     const AP_PORT_SHORT: &str = "a";
@@ -2022,6 +2036,13 @@ async fn get_setup() -> Setup {
     let save_token = opt_str(SAVE_TOKEN).unwrap_or_else(|| "".to_string());
     let client_id = opt_str(CLIENT_ID).unwrap_or_else(|| include_str!("client_id.txt").to_string());
 
+    #[cfg(feature = "lms-connect")]
+    let lms = opt_str(LYRION_MUSIC_SERVER);
+    #[cfg(feature = "lms-connect")]
+    let lms_auth = opt_str(LMS_AUTH);
+    #[cfg(feature = "lms-connect")]
+    let player_mac = opt_str(PLAYER_MAC);
+
     Setup {
         format,
         backend,
@@ -2060,6 +2081,12 @@ async fn get_setup() -> Setup {
         } else {
             Some(client_id)
         },
+        #[cfg(feature = "lms-connect")]
+        lms,
+        #[cfg(feature = "lms-connect")]
+        lms_auth,
+        #[cfg(feature = "lms-connect")]
+        player_mac,
     }
 }
 
@@ -2220,9 +2247,46 @@ async fn main() {
     let format = setup.format;
     let backend = setup.backend;
     let device = setup.device.clone();
+
+    // W6-locked: when the lms-connect feature is on, pass ConnectNullSink::open
+    // DIRECTLY as the sink builder to Player::new. No audio_backend::find
+    // registry mutation, no new backend name registered, no --backend CLI
+    // path touched. Non-feature builds fall through to the upstream
+    // `(backend)(device, format)` closure unchanged.
+    #[cfg(feature = "lms-connect")]
+    let player = {
+        // ConnectNullSink ignores `device` and `format`; we still pass the
+        // upstream-typed values so the closure shape matches Player::new's
+        // generic constraints exactly.
+        let _ = backend; // keep `setup.backend` selection valid for non-feature builds
+        Player::new(player_config, session.clone(), soft_volume, move || {
+            librespot::spotty::lms_connect::ConnectNullSink::open(device.clone(), format)
+        })
+    };
+    #[cfg(not(feature = "lms-connect"))]
     let player = Player::new(player_config, session.clone(), soft_volume, move || {
         (backend)(device, format)
     });
+
+    // Spawn the LMS PlayerEvent dispatcher loop. Requires --lms AND
+    // --player-mac to be configured; otherwise no-op.
+    #[cfg(feature = "lms-connect")]
+    {
+        let lms = librespot::spotty::lms_connect::LMS::new(
+            setup.lms.clone(),
+            setup.player_mac.clone(),
+            setup.lms_auth.clone(),
+        );
+        if lms.is_configured() {
+            let mut event_chan = player.get_player_event_channel();
+            tokio::spawn(async move {
+                let mut current_track: Option<String> = None;
+                while let Some(event) = event_chan.recv().await {
+                    lms.handle_player_event(&event, &mut current_track).await;
+                }
+            });
+        }
+    }
 
     #[cfg(not(feature = "spotty"))]
     if let Some(player_event_program) = setup.player_event_program.clone() {
