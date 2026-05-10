@@ -195,27 +195,18 @@ pub async fn play_track(
 #[cfg(feature = "lms-connect")]
 pub mod lms_connect {
     use std::sync::Arc;
-    #[allow(unused_imports)]
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
-    // Imports below cover both this commit (struct + sink) and the next one
-    // (handle_player_event + notify). The dispatcher commit consumes them all;
-    // silencing the lint here keeps commit 2 atomic.
-    #[allow(unused_imports)]
     use log::{info, warn};
-    #[allow(unused_imports)]
     use serde_json::json;
-    #[allow(unused_imports)]
     use tokio::io::AsyncWriteExt;
-    #[allow(unused_imports)]
     use tokio::net::TcpStream;
 
     use librespot_playback::audio_backend::{Sink, SinkResult};
     use librespot_playback::config::AudioFormat;
     use librespot_playback::convert::Converter;
     use librespot_playback::decoder::AudioPacket;
-    #[allow(unused_imports)]
     use librespot_playback::player::PlayerEvent;
     use librespot_playback::{NUM_CHANNELS, SAMPLE_RATE};
 
@@ -273,6 +264,162 @@ pub mod lms_connect {
                 // The wiring spawns a Tokio task that takes ownership of one
                 // clone; the suppression flag must remain a single shared cell.
                 suppress_next_volume: Arc::clone(&self.suppress_next_volume),
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // PlayerEvent dispatcher + JSON-RPC notifier
+    // -------------------------------------------------------------------------
+
+    impl LMS {
+        /// Consume one [`PlayerEvent`] and emit zero-or-one matching
+        /// `spottyconnect <cmd> <p1> <p2>` JSON-RPC dispatches.
+        ///
+        /// `current_track` is the dispatch loop's persistent cursor: the base62
+        /// id of whatever track we last saw `Playing`. It is mutated in place.
+        ///
+        /// The five emitted command names — `start`, `change`, `stop`,
+        /// `volume`, `seek` — are the wire vocabulary the Spotty-Plugin's
+        /// `Connect::_connectEvent` Perl handler will match in Phase 8.
+        /// `pause` is intentionally *not* emitted; Paused and Stopped both
+        /// collapse into a single `stop` event (per existing plugin contract).
+        pub async fn handle_player_event(
+            &self,
+            event: &PlayerEvent,
+            current_track: &mut Option<String>,
+        ) {
+            if !self.is_configured() {
+                return;
+            }
+
+            match event {
+                // Playing fires for: track-start, un-pause, post-seek, and
+                // buffer-underrun re-emit. We emit `start` only on a clean
+                // None -> Some transition; same-id re-emits are no-ops, and
+                // a different id replaces the cursor with `change`.
+                PlayerEvent::Playing { track_id, .. } => {
+                    let new_id = track_id.to_id();
+                    match current_track.as_deref() {
+                        Some(prev) if prev == new_id.as_str() => { /* noisy re-emit */ }
+                        Some(_) => {
+                            let prev = current_track.replace(new_id.clone()).unwrap_or_default();
+                            self.notify("change", &new_id, &prev).await;
+                        }
+                        None => {
+                            *current_track = Some(new_id.clone());
+                            self.notify("start", &new_id, "").await;
+                        }
+                    }
+                }
+
+                // Both Paused and Stopped collapse into `stop`. Only fire if
+                // we actually had an active track — guards against duplicate
+                // stop events on idle daemon.
+                PlayerEvent::Paused { .. } | PlayerEvent::Stopped { .. } => {
+                    if current_track.take().is_some() {
+                        self.notify("stop", "", "").await;
+                    }
+                }
+
+                // VolumeChanged: librespot reports 0..=65535; LMS speaks
+                // 0..=100. The first event after SessionConnected is a
+                // Spotify-cloud echo, not a user action — see suppress flag.
+                PlayerEvent::VolumeChanged { volume } => {
+                    if self.suppress_next_volume.swap(false, Ordering::Relaxed) {
+                        info!(
+                            "lms-connect: suppressed activation-time volume push from Spotify (raw={})",
+                            volume
+                        );
+                        return;
+                    }
+                    let pct = u32::from(*volume) * 100 / 65535;
+                    self.notify("volume", &pct.to_string(), "").await;
+                }
+
+                // Seeked: report position in seconds (3 decimals). Only valid
+                // mid-playback — without an active track, the seek vocabulary
+                // has no LMS-side referent.
+                PlayerEvent::Seeked { position_ms, .. } => {
+                    if current_track.is_some() {
+                        let secs = f64::from(*position_ms) / 1000.0;
+                        self.notify("seek", &format!("{secs:.3}"), "").await;
+                    }
+                }
+
+                // Spirc just connected to Spotify. The next VolumeChanged is
+                // Spotify's stored device volume being pushed back; flag it
+                // for suppression so we don't clobber LMS-side volume.
+                PlayerEvent::SessionConnected { .. } => {
+                    self.suppress_next_volume.store(true, Ordering::Relaxed);
+                }
+
+                // Everything else (Loading, Preloading, EndOfTrack, TrackChanged,
+                // SetQueue, PositionChanged, ...) — no LMS equivalent.
+                _ => {}
+            }
+        }
+
+        /// POST a `spottyconnect <cmd> <p1> <p2>` JSON-RPC slim.request to LMS.
+        ///
+        /// Opens a fresh TCP connection per event (no keep-alive). Errors are
+        /// logged at WARN; the daemon must never panic on a transient LMS
+        /// outage. If `auth` is set, an `Authorization: Basic <base64>` header
+        /// is added; the value is sent verbatim (caller pre-encoded it).
+        async fn notify(&self, cmd: &str, p1: &str, p2: &str) {
+            let host_port = match self.host_port.as_deref() {
+                Some(h) => h,
+                None => return,
+            };
+            let player_mac = match self.player_mac.as_deref() {
+                Some(m) => m,
+                None => return,
+            };
+
+            // Build the variadic spottyconnect command array. Empty trailing
+            // params are dropped — matches the over-the-wire shape the Perl
+            // _connectEvent handler historically expects.
+            let mut params: Vec<serde_json::Value> = Vec::with_capacity(4);
+            params.push(json!("spottyconnect"));
+            params.push(json!(cmd));
+            if !p1.is_empty() {
+                params.push(json!(p1));
+            }
+            if !p2.is_empty() {
+                params.push(json!(p2));
+            }
+            let body = json!({
+                "id": 1,
+                "method": "slim.request",
+                "params": [player_mac, params],
+            })
+            .to_string();
+
+            let auth_header = match self.auth.as_deref() {
+                Some(creds) => format!("Authorization: Basic {creds}\r\n"),
+                None => String::new(),
+            };
+
+            let request = format!(
+                "POST /jsonrpc.js HTTP/1.0\r\n\
+                 Host: {host_port}\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {len}\r\n\
+                 {auth_header}\
+                 \r\n\
+                 {body}",
+                len = body.len(),
+            );
+
+            match TcpStream::connect(host_port).await {
+                Ok(mut stream) => {
+                    if let Err(e) = stream.write_all(request.as_bytes()).await {
+                        warn!("lms-connect: write_all to {host_port} failed for {cmd}: {e}");
+                    }
+                }
+                Err(e) => {
+                    warn!("lms-connect: TcpStream::connect({host_port}) failed for {cmd}: {e}");
+                }
             }
         }
     }
@@ -350,12 +497,4 @@ pub mod lms_connect {
             Ok(())
         }
     }
-
-    // -------------------------------------------------------------------------
-    // PlayerEvent dispatcher + JSON-RPC notifier — implementation lives in the
-    // next commit (07-04 task 2).
-    // -------------------------------------------------------------------------
-
-    // `handle_player_event` and `notify` (using the imports above) land in
-    // commit 3 — kept atomic so each commit reads as a single concern.
 }
