@@ -185,7 +185,10 @@ tokio = { version = "1", features = [
     "signal",
     "sync",
     "process",
+    "net",
+    "io-util",
 ] }
+serde_json = "1"
 url = "2.2"
 
 [package.metadata.deb]
