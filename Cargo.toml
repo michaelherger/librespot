@@ -36,6 +36,7 @@ repository = "https://github.com/michaelherger/librespot"
 edition = "2024"
 
 [features]
+lms-connect = []  # LMS-Glue feature: enables LMS notification dispatch and streaming pipeline
 default = ["native-tls", "spotty", "with-libmdns"]
 default-linux = ["rustls-tls-webpki-roots", "spotty", "with-libmdns"]
 
