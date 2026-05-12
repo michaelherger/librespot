@@ -323,14 +323,6 @@ async fn get_setup() -> Setup {
     const ZEROCONF_INTERFACE: &str = "zeroconf-interface";
     const ZEROCONF_BACKEND: &str = "zeroconf-backend";
     const LOCAL_FILE_DIR: &str = "local-file-dir";
-    #[cfg(feature = "lms-connect")]
-    const LYRION_MUSIC_SERVER: &str = "lms";
-    #[cfg(feature = "lms-connect")]
-    const LMS_AUTH: &str = "lms-auth";
-    #[cfg(feature = "lms-connect")]
-    const PLAYER_MAC: &str = "player-mac";
-    #[cfg(feature = "lms-connect")]
-    const CHECK: &str = "check";
 
     // Mostly arbitrary.
     const AP_PORT_SHORT: &str = "a";
