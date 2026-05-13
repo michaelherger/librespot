@@ -323,6 +323,7 @@ async fn get_setup() -> Setup {
     const ZEROCONF_INTERFACE: &str = "zeroconf-interface";
     const ZEROCONF_BACKEND: &str = "zeroconf-backend";
     const LOCAL_FILE_DIR: &str = "local-file-dir";
+    const KEYMASTER_TOKEN: &str = "keymaster-token";
 
     // Mostly arbitrary.
     const AP_PORT_SHORT: &str = "a";
@@ -793,6 +794,11 @@ async fn get_setup() -> Setup {
         PLAYER_MAC,
         "MAC address of the Squeezebox to be controlled",
         "MAC"
+    )
+    .optflag(
+        "",
+        KEYMASTER_TOKEN,
+        "Get a fresh access token from stored credentials via Spotify login5, print JSON to stdout, then exit."
     );
 
     let args: Vec<_> = std::env::args_os()
@@ -869,6 +875,63 @@ async fn get_setup() -> Setup {
     #[cfg(feature = "spotty")]
     if opt_present(CHECK) {
         spotty::check(get_version_string());
+    }
+
+    if opt_present(KEYMASTER_TOKEN) {
+        setup_logging(opt_present(QUIET), opt_present(VERBOSE));
+
+        let cache_dir = opt_str(CACHE)
+            .or_else(|| opt_str(SYSTEM_CACHE))
+            .unwrap_or_else(|| {
+                error!("--{KEYMASTER_TOKEN} requires --{CACHE}/-{CACHE_SHORT}");
+                exit(1);
+            });
+
+        let cache = match Cache::new(
+            Some(PathBuf::from(&cache_dir)),
+            Some(PathBuf::from(&cache_dir)),
+            None,
+            None,
+        ) {
+            Ok(cache) => cache,
+            Err(e) => {
+                error!("Cannot create cache: {e}");
+                exit(1);
+            }
+        };
+
+        let credentials = cache.credentials().unwrap_or_else(|| {
+            error!("No stored credentials in {cache_dir}");
+            exit(1);
+        });
+
+        let session_config = SessionConfig::default();
+        let session = Session::new(session_config, Some(cache));
+
+        match session.connect(credentials, true).await {
+            Ok(()) => {
+                match session.login5().auth_token().await {
+                    Ok(token) => {
+                        let json = serde_json::json!({
+                            "accessToken": token.access_token,
+                            "expiresIn": token.expires_in.as_secs(),
+                            "tokenType": token.token_type,
+                            "scope": token.scopes,
+                        });
+                        println!("{json}");
+                        exit(0);
+                    }
+                    Err(e) => {
+                        error!("Failed to get auth token via login5: {e}");
+                        exit(1);
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to connect with stored credentials: {e}");
+                exit(1);
+            }
+        }
     }
 
     #[cfg(debug_assertions)]

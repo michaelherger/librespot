@@ -69,6 +69,7 @@ pub fn check(version_info: String) {
     let capabilities = json!({
         "autoplay": true,
         "debug": DEBUGMODE,
+        "keymaster-token": true,
         "lms-auth": true,
         "no-ap-port": true,
         "oauth": true,
