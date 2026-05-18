@@ -355,7 +355,26 @@ pub mod lms_connect {
                     self.suppress_next_volume.store(true, Ordering::Relaxed);
                 }
 
-                // Everything else (Loading, Preloading, EndOfTrack, TrackChanged,
+                // TrackChanged fires when librespot loads a new track (e.g.
+                // playlist jump via Spotify app). Update the cursor and emit
+                // `change` so the Perl side can switch. `Playing` may follow
+                // later and will be a same-id no-op.
+                PlayerEvent::TrackChanged { audio_item } => {
+                    let new_id = audio_item.track_id.to_id();
+                    match current_track.as_deref() {
+                        Some(prev) if prev == new_id.as_str() => { /* same track */ }
+                        Some(_) => {
+                            let prev = current_track.replace(new_id.clone()).unwrap_or_default();
+                            self.notify("change", &new_id, &prev).await;
+                        }
+                        None => {
+                            *current_track = Some(new_id.clone());
+                            self.notify("start", &new_id, "").await;
+                        }
+                    }
+                }
+
+                // Everything else (Loading, Preloading, EndOfTrack,
                 // SetQueue, PositionChanged, ...) — no LMS equivalent.
                 _ => {}
             }
