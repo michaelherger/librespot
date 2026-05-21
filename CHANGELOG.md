@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (spotty feature)
+- [lms-connect] New `lms-connect` cargo feature: LMS glue for Spotify Connect event dispatch
+  to Lyrion Music Server via JSON-RPC, streaming pipe output, and token helpers
+- [lms-connect] `--lms` / `--player-mac` CLI flags: connect spotty to LMS endpoint for
+  real-time PlayerEvent forwarding (TrackChanged, PlaybackStart, etc.)
+- [lms-connect] `--keymaster-token` CLI flag: binary-assisted OAuth token refresh for LMS
+- [lms-connect] `--get-token` / `--save-token` CLI flags: token persistence for LMS
+- [lms-connect] `ConnectNullSink` audio backend module for pure-control-plane operation
+
 ## [0.8.0] - 2025-11-10
 
 ### Added
