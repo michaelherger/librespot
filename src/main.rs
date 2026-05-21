@@ -878,8 +878,6 @@ async fn get_setup() -> Setup {
     }
 
     if opt_present(KEYMASTER_TOKEN) {
-        setup_logging(opt_present(QUIET), opt_present(VERBOSE));
-
         let cache_dir = opt_str(CACHE)
             .or_else(|| opt_str(SYSTEM_CACHE))
             .unwrap_or_else(|| {
