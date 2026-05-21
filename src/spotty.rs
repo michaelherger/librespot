@@ -47,14 +47,14 @@ use serde_json::{Value, json};
 use std::fs;
 use std::process::exit;
 
-use librespot::core::authentication::Credentials;
-use librespot::core::session::Session;
-use librespot::core::spotify_uri::SpotifyUri;
+use librespot_core::authentication::Credentials;
+use librespot_core::session::Session;
+use librespot_core::spotify_uri::SpotifyUri;
 
-use librespot::playback::audio_backend;
-use librespot::playback::config::{AudioFormat, PlayerConfig};
-use librespot::playback::mixer::NoOpVolume;
-use librespot::playback::player::Player;
+use librespot_playback::audio_backend;
+use librespot_playback::config::{AudioFormat, PlayerConfig};
+use librespot_playback::mixer::NoOpVolume;
+use librespot_playback::player::Player;
 
 #[cfg(debug_assertions)]
 const DEBUGMODE: bool = true;
@@ -300,7 +300,7 @@ pub mod lms_connect {
                 // None -> Some transition; same-id re-emits are no-ops, and
                 // a different id replaces the cursor with `change`.
                 PlayerEvent::Playing { track_id, .. } => {
-                    let new_id = track_id.to_id();
+                    let new_id = track_id.to_id().unwrap_or_default();
                     match current_track.as_deref() {
                         Some(prev) if prev == new_id.as_str() => { /* noisy re-emit */ }
                         Some(_) => {
@@ -360,7 +360,7 @@ pub mod lms_connect {
                 // `change` so the Perl side can switch. `Playing` may follow
                 // later and will be a same-id no-op.
                 PlayerEvent::TrackChanged { audio_item } => {
-                    let new_id = audio_item.track_id.to_id();
+                    let new_id = audio_item.track_id.to_id().unwrap_or_default();
                     match current_track.as_deref() {
                         Some(prev) if prev == new_id.as_str() => { /* same track */ }
                         Some(_) => {
