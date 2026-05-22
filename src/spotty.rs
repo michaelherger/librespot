@@ -68,6 +68,7 @@ pub fn check(version_info: String) {
 
     let capabilities = json!({
         "autoplay": true,
+        "connect-stream": true,
         "debug": DEBUGMODE,
         "keymaster-token": true,
         "lms-auth": true,
@@ -204,7 +205,7 @@ pub mod lms_connect {
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
 
-    use librespot_playback::audio_backend::{Sink, SinkResult};
+    use librespot_playback::audio_backend::{Sink, SinkError, SinkResult};
     use librespot_playback::config::AudioFormat;
     use librespot_playback::convert::Converter;
     use librespot_playback::decoder::AudioPacket;
@@ -514,6 +515,121 @@ pub mod lms_connect {
                 let park_ns = (expected_ns - elapsed_ns) as u64;
                 std::thread::sleep(Duration::from_nanos(park_ns));
             }
+            Ok(())
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // StdoutStreamSink
+    // -------------------------------------------------------------------------
+
+    /// Audio sink for `--connect-stream` mode.
+    ///
+    /// Unlike [`ConnectNullSink`] (which discards decoded PCM), this sink writes
+    /// a continuous S16LE stereo stream to stdout at real-time pace, allowing LMS
+    /// to consume it as a radio-pattern audio source.
+    ///
+    /// Unlike `pipe.rs::StdoutSink` (which calls `exit(0)` in `stop()`), this
+    /// sink's `stop()` only resets counters. The process outlives individual track
+    /// boundaries so Spotify Connect can deliver gapless playback across the LMS
+    /// player's lifetime.
+    ///
+    /// Rate-limiting follows the same nanosecond wall-clock math as
+    /// [`ConnectNullSink`], wrapping `std::thread::sleep` inside
+    /// `tokio::task::block_in_place` so the Tokio scheduler can spawn an
+    /// additional OS thread rather than stalling the worker (D-02 decision).
+    pub struct StdoutStreamSink {
+        began_at: Instant,
+        frames_consumed: u64,
+    }
+
+    impl StdoutStreamSink {
+        /// Constructor matching the `SinkBuilder` signature so this can be
+        /// passed straight to `Player::new`.
+        ///
+        /// Panics if `format != AudioFormat::S16` — only S16LE is supported
+        /// (pitfall S-03: format continuity).
+        pub fn open(_device: Option<String>, format: AudioFormat) -> Box<dyn Sink> {
+            if format != AudioFormat::S16 {
+                panic!(
+                    "StdoutStreamSink: only AudioFormat::S16 supported, got {:?}",
+                    format
+                );
+            }
+            Box::new(Self {
+                began_at: Instant::now(),
+                frames_consumed: 0,
+            })
+        }
+    }
+
+    impl Sink for StdoutStreamSink {
+        fn start(&mut self) -> SinkResult<()> {
+            // Reset the wall-clock anchor every time playback begins so the
+            // rate-limiter doesn't drift across pause/resume cycles.
+            self.began_at = Instant::now();
+            self.frames_consumed = 0;
+            Ok(())
+        }
+
+        fn stop(&mut self) -> SinkResult<()> {
+            // CRITICAL: do NOT exit() the process here. The pipe/StdoutSink
+            // backend in librespot terminates the daemon at end-of-stream under
+            // #[cfg(feature = "spotty")]; that is designed for --single-track.
+            // StdoutStreamSink must survive track boundaries for gapless
+            // Connect playback (BIN-03).
+            self.frames_consumed = 0;
+            Ok(())
+        }
+
+        fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
+            let AudioPacket::Samples(samples) = packet else {
+                // Raw passthrough variant — not in scope for this sink; skip.
+                return Ok(());
+            };
+
+            // Convert f64 samples to S16LE and reinterpret as a byte slice.
+            // SAFETY: i16 has alignment 2 and size 2; the resulting byte slice
+            // has len = samples_s16.len() * 2 and points to valid memory for
+            // the lifetime of `samples_s16`. This is equivalent to zerocopy's
+            // IntoBytes::as_bytes() but avoids adding zerocopy as a dependency
+            // to the spotty binary crate (zerocopy lives in the playback crate).
+            let samples_s16 = converter.f64_to_s16(&samples);
+            // SAFETY: `i16` values are valid to view as two `u8` bytes; pointer
+            // and length are derived from the valid Vec allocation.
+            let bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    samples_s16.as_ptr().cast::<u8>(),
+                    samples_s16.len() * std::mem::size_of::<i16>(),
+                )
+            };
+
+            // Rate-limiter — identical to ConnectNullSink (pitfall S-01).
+            // Without this sleep the decoder races ahead of wall-clock time,
+            // making Spotify clients show nonsensical seek positions.
+            let frames_in_packet = (samples.len() / NUM_CHANNELS as usize) as u64;
+            self.frames_consumed = self.frames_consumed.saturating_add(frames_in_packet);
+            let expected_ns: u128 =
+                u128::from(self.frames_consumed) * 1_000_000_000u128 / u128::from(SAMPLE_RATE);
+            let elapsed_ns: u128 = self.began_at.elapsed().as_nanos();
+
+            if expected_ns > elapsed_ns {
+                let park_ns = (expected_ns - elapsed_ns) as u64;
+                // D-02: block_in_place signals Tokio to spawn an extra OS thread
+                // rather than stalling the current worker (pitfall S-07).
+                tokio::task::block_in_place(|| {
+                    std::thread::sleep(Duration::from_nanos(park_ns));
+                });
+            }
+
+            // Write PCM bytes to stdout. A broken pipe (LMS closed read end)
+            // is mapped to SinkError::OnWrite; player.rs then calls exit(1)
+            // for a clean shutdown (T-14-04 mitigation).
+            use std::io::Write;
+            std::io::stdout()
+                .write_all(bytes)
+                .map_err(|e| SinkError::OnWrite(e.to_string()))?;
+
             Ok(())
         }
     }
