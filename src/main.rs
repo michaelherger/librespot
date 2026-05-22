@@ -259,6 +259,8 @@ struct Setup {
     lms_auth: Option<String>,
     #[cfg(feature = "lms-connect")]
     player_mac: Option<String>,
+    #[cfg(feature = "lms-connect")]
+    connect_stream: bool,
 }
 
 async fn get_setup() -> Setup {
@@ -324,6 +326,7 @@ async fn get_setup() -> Setup {
     const ZEROCONF_BACKEND: &str = "zeroconf-backend";
     const LOCAL_FILE_DIR: &str = "local-file-dir";
     const KEYMASTER_TOKEN: &str = "keymaster-token";
+    const CONNECT_STREAM: &str = "connect-stream";
 
     // Mostly arbitrary.
     const AP_PORT_SHORT: &str = "a";
@@ -799,6 +802,11 @@ async fn get_setup() -> Setup {
         "",
         KEYMASTER_TOKEN,
         "Get a fresh access token from stored credentials via Spotify login5, print JSON to stdout, then exit."
+    )
+    .optflag(
+        "",
+        CONNECT_STREAM,
+        "[S] Run as a continuous Spotify Connect audio stream to stdout (S16LE PCM, 44100 Hz, stereo)."
     );
 
     let args: Vec<_> = std::env::args_os()
@@ -2140,6 +2148,8 @@ async fn get_setup() -> Setup {
         lms_auth,
         #[cfg(feature = "lms-connect")]
         player_mac,
+        #[cfg(feature = "lms-connect")]
+        connect_stream: opt_present(CONNECT_STREAM),
     }
 }
 
@@ -2308,12 +2318,19 @@ async fn main() {
     // `(backend)(device, format)` closure unchanged.
     #[cfg(feature = "lms-connect")]
     let player = {
-        // ConnectNullSink ignores `device` and `format`; we still pass the
-        // upstream-typed values so the closure shape matches Player::new's
-        // generic constraints exactly.
+        // Select sink based on --connect-stream flag: StdoutStreamSink writes
+        // real-time rate-limited S16LE PCM to stdout for LMS radio-pattern
+        // consumption; ConnectNullSink discards audio for headless Connect-
+        // receiver mode. Both ignore `device`; StdoutStreamSink requires S16.
         let _ = backend; // keep `setup.backend` selection valid for non-feature builds
+        use librespot_playback::audio_backend::SinkBuilder;
+        let sink_builder: SinkBuilder = if setup.connect_stream {
+            librespot::spotty::lms_connect::StdoutStreamSink::open
+        } else {
+            librespot::spotty::lms_connect::ConnectNullSink::open
+        };
         Player::new(player_config, session.clone(), soft_volume, move || {
-            librespot::spotty::lms_connect::ConnectNullSink::open(device.clone(), format)
+            sink_builder(device.clone(), format)
         })
     };
     #[cfg(not(feature = "lms-connect"))]
