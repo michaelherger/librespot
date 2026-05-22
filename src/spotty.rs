@@ -66,7 +66,7 @@ pub const VERSION: &str = "2.1.0";
 pub fn check(version_info: String) {
     println!("ok {}", version_info);
 
-    let capabilities = json!({
+    let mut capabilities = json!({
         "autoplay": true,
         "connect-stream": true,
         "debug": DEBUGMODE,
@@ -535,9 +535,9 @@ pub mod lms_connect {
     /// player's lifetime.
     ///
     /// Rate-limiting follows the same nanosecond wall-clock math as
-    /// [`ConnectNullSink`], wrapping `std::thread::sleep` inside
-    /// `tokio::task::block_in_place` so the Tokio scheduler can spawn an
-    /// additional OS thread rather than stalling the worker (D-02 decision).
+    /// [`ConnectNullSink`], using plain `std::thread::sleep` since the Player
+    /// runs Sink::write on a dedicated OS thread (std::thread::spawn in
+    /// player.rs), not on a Tokio worker.
     pub struct StdoutStreamSink {
         began_at: Instant,
         frames_consumed: u64,
@@ -578,7 +578,10 @@ pub mod lms_connect {
             // #[cfg(feature = "spotty")]; that is designed for --single-track.
             // StdoutStreamSink must survive track boundaries for gapless
             // Connect playback (BIN-03).
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
             self.frames_consumed = 0;
+            self.began_at = Instant::now();
             Ok(())
         }
 
@@ -615,11 +618,7 @@ pub mod lms_connect {
 
             if expected_ns > elapsed_ns {
                 let park_ns = (expected_ns - elapsed_ns) as u64;
-                // D-02: block_in_place signals Tokio to spawn an extra OS thread
-                // rather than stalling the current worker (pitfall S-07).
-                tokio::task::block_in_place(|| {
-                    std::thread::sleep(Duration::from_nanos(park_ns));
-                });
+                std::thread::sleep(Duration::from_nanos(park_ns));
             }
 
             // Write PCM bytes to stdout. A broken pipe (LMS closed read end)
