@@ -645,14 +645,27 @@ pub mod lms_connect {
             }
 
             // Send PCM bytes over the channel to the HTTP stream server.
-            // blocking_send is safe here because Sink::write runs on an OS
-            // thread (std::thread::spawn inside player.rs), never on a Tokio
-            // worker thread (BIN-03). A SendError means the server has been
-            // shut down, which we map to SinkError::OnWrite for a clean exit.
+            // Player::new spawns a std::thread but runs block_on() with its
+            // own tokio Runtime inside it (player.rs:517), so Sink::write
+            // executes within a tokio context. blocking_send would panic.
+            // Use try_send with a spin-retry: the channel has 256 slots
+            // (~1.5s of audio) and a single consumer, so contention is
+            // transient — the rate-limiter above already paces us to
+            // real-time, keeping the channel nearly empty.
             let chunk = Bytes::copy_from_slice(bytes);
-            self.pcm_tx
-                .blocking_send(chunk)
-                .map_err(|e| SinkError::OnWrite(e.to_string()))?;
+            loop {
+                match self.pcm_tx.try_send(chunk.clone()) {
+                    Ok(()) => break,
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        return Err(SinkError::OnWrite(
+                            "HTTP stream server shut down".into(),
+                        ));
+                    }
+                }
+            }
 
             Ok(())
         }
