@@ -3494,10 +3494,14 @@ dependencies = [
 name = "spotty"
 version = "0.8.0"
 dependencies = [
+ "bytes",
  "data-encoding",
  "env_logger",
  "futures-util",
  "getopts",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "librespot-audio",
  "librespot-connect",
  "librespot-core",
@@ -3512,6 +3516,7 @@ dependencies = [
  "sysinfo",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-stream",
  "url",
 ]
 

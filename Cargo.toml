@@ -189,6 +189,11 @@ tokio = { version = "1", features = [
     "io-util",
 ] }
 url = "2.2"
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "service", "tokio"] }
+tokio-stream = "0.1"
 
 [package.metadata.deb]
 maintainer = "Librespot Organization <noreply@github.com>"

@@ -2318,17 +2318,15 @@ async fn main() {
     // `(backend)(device, format)` closure unchanged.
     #[cfg(feature = "lms-connect")]
     let player = {
-        // Select sink based on --connect-stream flag: StdoutStreamSink writes
-        // real-time rate-limited S16LE PCM to stdout for LMS radio-pattern
-        // consumption; ConnectNullSink discards audio for headless Connect-
-        // receiver mode. Both ignore `device`; StdoutStreamSink requires S16.
+        // Select sink based on --connect-stream flag.
+        // Phase 21: HttpStreamSink replaces StdoutStreamSink. The full wiring
+        // (pcm_tx channel, http_stream_server spawn) is done in Phase 22
+        // (Plan 02). Until then, --connect-stream falls back to ConnectNullSink
+        // so the binary still compiles and headless Connect mode works.
+        // TODO(Phase-22): wire HttpStreamSink + http_stream_server here.
         let _ = backend; // keep `setup.backend` selection valid for non-feature builds
         use librespot_playback::audio_backend::SinkBuilder;
-        let sink_builder: SinkBuilder = if setup.connect_stream {
-            librespot::spotty::lms_connect::StdoutStreamSink::open
-        } else {
-            librespot::spotty::lms_connect::ConnectNullSink::open
-        };
+        let sink_builder: SinkBuilder = librespot::spotty::lms_connect::ConnectNullSink::open;
         Player::new(player_config, session.clone(), soft_volume, move || {
             sink_builder(device.clone(), format)
         })

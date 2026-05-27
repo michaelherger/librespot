@@ -70,6 +70,7 @@ pub fn check(version_info: String) {
         "autoplay": true,
         "connect-stream": true,
         "debug": DEBUGMODE,
+        "http-stream": true,
         "keymaster-token": true,
         "lms-auth": true,
         "no-ap-port": true,
@@ -200,10 +201,20 @@ pub mod lms_connect {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
+    use bytes::Bytes;
+    use futures_util::StreamExt;
+    use http_body_util::{BodyExt, Full, StreamBody};
+    use hyper::body::Frame;
+    use hyper::server::conn::http1;
+    use hyper::{Response, StatusCode};
+    use hyper_util::rt::TokioIo;
+    use hyper_util::server::graceful::GracefulShutdown;
     use log::{info, warn};
     use serde_json::json;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
+    use tokio::sync::mpsc;
+    use tokio_stream::wrappers::ReceiverStream;
 
     use librespot_playback::audio_backend::{Sink, SinkError, SinkResult};
     use librespot_playback::config::AudioFormat;
@@ -520,50 +531,60 @@ pub mod lms_connect {
     }
 
     // -------------------------------------------------------------------------
-    // StdoutStreamSink
+    // HttpStreamSink
     // -------------------------------------------------------------------------
 
     /// Audio sink for `--connect-stream` mode.
     ///
-    /// Unlike [`ConnectNullSink`] (which discards decoded PCM), this sink writes
-    /// a continuous S16LE stereo stream to stdout at real-time pace, allowing LMS
-    /// to consume it as a radio-pattern audio source.
+    /// Unlike [`ConnectNullSink`] (which discards decoded PCM), this sink sends
+    /// a continuous S16LE stereo stream over an mpsc channel to the HTTP stream
+    /// server, allowing LMS to consume it via `canDirectStream` as a plain HTTP
+    /// audio source.
     ///
     /// Unlike `pipe.rs::StdoutSink` (which calls `exit(0)` in `stop()`), this
-    /// sink's `stop()` only resets counters. The process outlives individual track
-    /// boundaries so Spotify Connect can deliver gapless playback across the LMS
-    /// player's lifetime.
+    /// sink's `stop()` only resets counters. The process outlives individual
+    /// track boundaries so Spotify Connect can deliver gapless playback across
+    /// the LMS player's lifetime.
     ///
     /// Rate-limiting follows the same nanosecond wall-clock math as
     /// [`ConnectNullSink`], using plain `std::thread::sleep` since the Player
-    /// runs Sink::write on a dedicated OS thread (std::thread::spawn in
-    /// player.rs), not on a Tokio worker.
-    pub struct StdoutStreamSink {
+    /// runs `Sink::write` on a dedicated OS thread (std::thread::spawn in
+    /// player.rs), not on a Tokio worker. `blocking_send` is therefore safe
+    /// here (BIN-03).
+    pub struct HttpStreamSink {
+        pcm_tx: mpsc::Sender<Bytes>,
         began_at: Instant,
         frames_consumed: u64,
     }
 
-    impl StdoutStreamSink {
-        /// Constructor matching the `SinkBuilder` signature so this can be
-        /// passed straight to `Player::new`.
+    impl HttpStreamSink {
+        /// Constructor for use in the `--connect-stream` wiring.
+        ///
+        /// `pcm_tx` is the sending half of the channel that connects this sink
+        /// (OS thread) to `http_stream_server` (Tokio task).
         ///
         /// Panics if `format != AudioFormat::S16` — only S16LE is supported
         /// (pitfall S-03: format continuity).
-        pub fn open(_device: Option<String>, format: AudioFormat) -> Box<dyn Sink> {
+        pub fn open(
+            _device: Option<String>,
+            format: AudioFormat,
+            pcm_tx: mpsc::Sender<Bytes>,
+        ) -> Box<dyn Sink> {
             if format != AudioFormat::S16 {
                 panic!(
-                    "StdoutStreamSink: only AudioFormat::S16 supported, got {:?}",
+                    "HttpStreamSink: only AudioFormat::S16 supported, got {:?}",
                     format
                 );
             }
             Box::new(Self {
+                pcm_tx,
                 began_at: Instant::now(),
                 frames_consumed: 0,
             })
         }
     }
 
-    impl Sink for StdoutStreamSink {
+    impl Sink for HttpStreamSink {
         fn start(&mut self) -> SinkResult<()> {
             // Reset the wall-clock anchor every time playback begins so the
             // rate-limiter doesn't drift across pause/resume cycles.
@@ -576,10 +597,9 @@ pub mod lms_connect {
             // CRITICAL: do NOT exit() the process here. The pipe/StdoutSink
             // backend in librespot terminates the daemon at end-of-stream under
             // #[cfg(feature = "spotty")]; that is designed for --single-track.
-            // StdoutStreamSink must survive track boundaries for gapless
-            // Connect playback (BIN-03).
-            use std::io::Write;
-            let _ = std::io::stdout().flush();
+            // HttpStreamSink must survive track boundaries for gapless Connect
+            // playback (BIN-03). No stdout flush needed — we write to an mpsc
+            // channel, not stdout.
             self.frames_consumed = 0;
             self.began_at = Instant::now();
             Ok(())
@@ -621,15 +641,163 @@ pub mod lms_connect {
                 std::thread::sleep(Duration::from_nanos(park_ns));
             }
 
-            // Write PCM bytes to stdout. A broken pipe (LMS closed read end)
-            // is mapped to SinkError::OnWrite; player.rs then calls exit(1)
-            // for a clean shutdown (T-14-04 mitigation).
-            use std::io::Write;
-            std::io::stdout()
-                .write_all(bytes)
+            // Send PCM bytes over the channel to the HTTP stream server.
+            // blocking_send is safe here because Sink::write runs on an OS
+            // thread (std::thread::spawn inside player.rs), never on a Tokio
+            // worker thread (BIN-03). A SendError means the server has been
+            // shut down, which we map to SinkError::OnWrite for a clean exit.
+            let chunk = Bytes::copy_from_slice(bytes);
+            self.pcm_tx
+                .blocking_send(chunk)
                 .map_err(|e| SinkError::OnWrite(e.to_string()))?;
 
             Ok(())
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // http_stream_server
+    // -------------------------------------------------------------------------
+
+    /// HTTP server that streams PCM audio to LMS via a single persistent
+    /// GET /stream endpoint.
+    ///
+    /// Listens on the supplied `listener` (bound to 127.0.0.1 before calling
+    /// this function). Receives decoded S16LE PCM from [`HttpStreamSink`] via
+    /// `pcm_rx`. Uses a relay-per-connection pattern so the single
+    /// `mpsc::Receiver` is shared across sequential connections without cloning.
+    ///
+    /// ## Connection lifecycle
+    ///
+    /// 1. Accept incoming TCP connection.
+    /// 2. If `spirc_active` is false → return 503 with `Retry-After: 2`. Close.
+    /// 3. Otherwise:
+    ///    a. Drain stale PCM chunks from `pcm_rx` via `try_recv` (D-03).
+    ///    b. Spawn a relay task that forwards from `pcm_rx` to a per-connection
+    ///       bounded channel (`conn_tx` / `conn_rx`).
+    ///    c. Serve a 200 response with `Content-Type: audio/L16;rate=44100;channels=2`
+    ///       and a streaming body backed by `ReceiverStream(conn_rx)`.
+    ///    d. When LMS disconnects, `conn_tx.send` in the relay fails → relay
+    ///       exits → the Mutex over `pcm_rx` is released for the next connection.
+    ///
+    /// ## Shutdown
+    ///
+    /// When `shutdown_rx` fires, the accept loop breaks and
+    /// `graceful.shutdown().await` drains in-flight connections.
+    pub async fn http_stream_server(
+        listener: tokio::net::TcpListener,
+        pcm_rx: mpsc::Receiver<Bytes>,
+        spirc_active: Arc<AtomicBool>,
+        shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    ) {
+        use std::sync::Mutex;
+
+        let server = http1::Builder::new();
+        let graceful = GracefulShutdown::new();
+        let mut shutdown_rx = std::pin::pin!(shutdown_rx);
+
+        // Wrap pcm_rx in Arc<Mutex> so the relay task can acquire it
+        // exclusively without requiring pcm_rx: Clone (it isn't).
+        let pcm_rx = Arc::new(Mutex::new(pcm_rx));
+
+        loop {
+            tokio::select! {
+                accept_result = listener.accept() => {
+                    let (stream, _addr) = match accept_result {
+                        Ok(pair) => pair,
+                        Err(e) => {
+                            warn!("http_stream_server: accept error: {e}");
+                            continue;
+                        }
+                    };
+
+                    let spirc_active = Arc::clone(&spirc_active);
+                    let pcm_rx = Arc::clone(&pcm_rx);
+
+                    // Build the service function for this single connection.
+                    // Both response paths (503 and 200-stream) are erased to
+                    // BoxBody<Bytes, hyper::Error> so the return type is uniform.
+                    let svc = hyper::service::service_fn(move |_req| {
+                        let spirc_active = Arc::clone(&spirc_active);
+                        let pcm_rx = Arc::clone(&pcm_rx);
+                        async move {
+                            if !spirc_active.load(Ordering::SeqCst) {
+                                // Spirc not active yet — tell LMS to retry shortly.
+                                let body = Full::new(Bytes::new())
+                                    .map_err(|e| match e {})
+                                    .boxed();
+                                let resp = Response::builder()
+                                    .status(StatusCode::SERVICE_UNAVAILABLE)
+                                    .header("Retry-After", "2")
+                                    .header("Content-Length", "0")
+                                    .body(body)
+                                    .unwrap();
+                                return Ok::<Response<http_body_util::combinators::BoxBody<Bytes, hyper::Error>>, hyper::Error>(resp);
+                            }
+
+                            // Drain stale pre-seek audio from the channel (D-03).
+                            {
+                                let mut rx = pcm_rx.lock().unwrap();
+                                while rx.try_recv().is_ok() {}
+                            }
+
+                            // Per-connection relay channel (capacity 64 frames).
+                            let (conn_tx, conn_rx) = mpsc::channel::<Bytes>(64);
+
+                            // Relay task: holds the pcm_rx mutex and forwards
+                            // chunks to conn_tx. Exits when conn_tx.send fails
+                            // (client disconnected) or pcm_rx is closed.
+                            let pcm_rx_clone = Arc::clone(&pcm_rx);
+                            tokio::spawn(async move {
+                                loop {
+                                    let chunk = {
+                                        let mut rx = pcm_rx_clone.lock().unwrap();
+                                        rx.try_recv().ok()
+                                    };
+                                    match chunk {
+                                        Some(bytes) => {
+                                            if conn_tx.send(bytes).await.is_err() {
+                                                // Client disconnected — relay done.
+                                                break;
+                                            }
+                                        }
+                                        None => {
+                                            // No data yet — yield to Tokio runtime
+                                            // briefly before polling again.
+                                            tokio::task::yield_now().await;
+                                        }
+                                    }
+                                }
+                            });
+
+                            // Build streaming response body, erased to BoxBody.
+                            let stream = ReceiverStream::new(conn_rx)
+                                .map(|chunk| Ok::<Frame<Bytes>, hyper::Error>(Frame::data(chunk)));
+                            let body = BodyExt::boxed(StreamBody::new(stream));
+
+                            let resp = Response::builder()
+                                .status(StatusCode::OK)
+                                .header("Content-Type", "audio/L16;rate=44100;channels=2")
+                                .body(body)
+                                .unwrap();
+
+                            Ok::<Response<http_body_util::combinators::BoxBody<Bytes, hyper::Error>>, hyper::Error>(resp)
+                        }
+                    });
+
+                    let io = TokioIo::new(stream);
+                    let conn = server.serve_connection(io, svc);
+                    let fut = graceful.watch(conn);
+                    tokio::spawn(async move {
+                        let _ = fut.await;
+                    });
+                }
+                _ = &mut shutdown_rx => {
+                    break;
+                }
+            }
+        }
+
+        graceful.shutdown().await;
     }
 }
