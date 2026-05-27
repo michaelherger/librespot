@@ -2311,25 +2311,84 @@ async fn main() {
     let backend = setup.backend;
     let device = setup.device.clone();
 
-    // W6-locked: when the lms-connect feature is on, pass ConnectNullSink::open
-    // DIRECTLY as the sink builder to Player::new. No audio_backend::find
-    // registry mutation, no new backend name registered, no --backend CLI
-    // path touched. Non-feature builds fall through to the upstream
-    // `(backend)(device, format)` closure unchanged.
+    // W6-locked: when the lms-connect feature is on, select the appropriate sink
+    // (HttpStreamSink in --connect-stream mode, ConnectNullSink otherwise).
+    // Non-feature builds fall through to the upstream `(backend)(device, format)`
+    // closure unchanged.
     #[cfg(feature = "lms-connect")]
-    let player = {
-        // Select sink based on --connect-stream flag.
-        // Phase 21: HttpStreamSink replaces StdoutStreamSink. The full wiring
-        // (pcm_tx channel, http_stream_server spawn) is done in Phase 22
-        // (Plan 02). Until then, --connect-stream falls back to ConnectNullSink
-        // so the binary still compiles and headless Connect mode works.
-        // TODO(Phase-22): wire HttpStreamSink + http_stream_server here.
+    let spirc_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    #[cfg(feature = "lms-connect")]
+    let (player, pcm_rx_opt) = {
         let _ = backend; // keep `setup.backend` selection valid for non-feature builds
-        use librespot_playback::audio_backend::SinkBuilder;
-        let sink_builder: SinkBuilder = librespot::spotty::lms_connect::ConnectNullSink::open;
-        Player::new(player_config, session.clone(), soft_volume, move || {
-            sink_builder(device.clone(), format)
-        })
+        if setup.connect_stream {
+            // HTTP streaming mode: create the PCM channel, wire HttpStreamSink,
+            // keep pcm_rx for http_stream_server spawning below.
+            let (pcm_tx, pcm_rx) =
+                tokio::sync::mpsc::channel::<bytes::Bytes>(256);
+            let player = Player::new(
+                player_config,
+                session.clone(),
+                soft_volume,
+                move || {
+                    librespot::spotty::lms_connect::HttpStreamSink::open(
+                        device.clone(),
+                        format,
+                        pcm_tx,
+                    )
+                },
+            );
+            (player, Some(pcm_rx))
+        } else {
+            // Headless Connect mode: discard PCM, no HTTP server needed.
+            let player = Player::new(
+                player_config,
+                session.clone(),
+                soft_volume,
+                move || {
+                    librespot::spotty::lms_connect::ConnectNullSink::open(
+                        device.clone(),
+                        format,
+                    )
+                },
+            );
+            (player, None::<tokio::sync::mpsc::Receiver<bytes::Bytes>>)
+        }
+    };
+
+    // Bind TcpListener, announce stream_port, spawn http_stream_server.
+    // All within #[cfg(feature = "lms-connect")] and guarded by pcm_rx_opt.
+    #[cfg(feature = "lms-connect")]
+    let (http_shutdown_tx_opt, http_handle_opt) = {
+        if let Some(pcm_rx) = pcm_rx_opt {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("Failed to bind HTTP stream port");
+            let port = listener
+                .local_addr()
+                .expect("Failed to get local addr")
+                .port();
+            // Print port announcement BEFORE entering the event loop so
+            // Daemon.pm can read it synchronously (BIN-01 / D-02).
+            println!("stream_port={port}");
+            // Explicit flush — stdout may be pipe-buffered (Pitfall 3).
+            use std::io::Write as _;
+            std::io::stdout().flush().expect("stdout flush failed");
+
+            let (http_shutdown_tx, http_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            let spirc_active_clone = spirc_active.clone();
+            let http_handle = tokio::spawn(
+                librespot::spotty::lms_connect::http_stream_server(
+                    listener,
+                    pcm_rx,
+                    spirc_active_clone,
+                    http_shutdown_rx,
+                ),
+            );
+            (Some(http_shutdown_tx), Some(http_handle))
+        } else {
+            (None, None)
+        }
     };
     #[cfg(not(feature = "lms-connect"))]
     let player = Player::new(player_config, session.clone(), soft_volume, move || {
@@ -2384,6 +2443,9 @@ async fn main() {
                         auto_connect_times.clear();
 
                         if let Some(spirc) = spirc.take() {
+                            // Session is being replaced — old Spirc shutting down.
+                            #[cfg(feature = "lms-connect")]
+                            spirc_active.store(false, std::sync::atomic::Ordering::SeqCst);
                             if let Err(e) = spirc.shutdown() {
                                 error!("error sending spirc shutdown message: {e}");
                             }
@@ -2431,6 +2493,9 @@ async fn main() {
                 };
                 spirc = Some(spirc_);
                 spirc_task = Some(Box::pin(spirc_task_));
+                // Mark Spirc as active so http_stream_server serves 200 responses.
+                #[cfg(feature = "lms-connect")]
+                spirc_active.store(true, std::sync::atomic::Ordering::SeqCst);
 
                 connecting = false;
             },
@@ -2440,6 +2505,9 @@ async fn main() {
                 }
             }, if spirc_task.is_some() && !connecting => {
                 spirc_task = None;
+                // Mark Spirc as inactive so http_stream_server returns 503.
+                #[cfg(feature = "lms-connect")]
+                spirc_active.store(false, std::sync::atomic::Ordering::SeqCst);
 
                 warn!("Spirc shut down unexpectedly");
 
@@ -2487,6 +2555,15 @@ async fn main() {
 
     if let Some(discovery) = discovery {
         shutdown_tasks.spawn(discovery.shutdown());
+    }
+
+    // Shut down the HTTP stream server (BIN-06: graceful shutdown via JoinSet).
+    #[cfg(feature = "lms-connect")]
+    if let (Some(tx), Some(handle)) = (http_shutdown_tx_opt, http_handle_opt) {
+        shutdown_tasks.spawn(async move {
+            let _ = tx.send(());
+            let _ = handle.await;
+        });
     }
 
     tokio::select! {
