@@ -254,8 +254,11 @@ pub mod lms_connect {
             Self {
                 host_port,
                 player_mac,
-                // Trim accidental whitespace/newlines from CLI-passed creds.
-                auth: auth.map(|raw| raw.trim().to_owned()),
+                // CR-02: sanitize `--lms-auth` credential to prevent CRLF injection
+                // into the hand-rolled HTTP/1.0 notify request. `trim()` removes
+                // leading/trailing whitespace; `replace` strips any embedded CR/LF
+                // that would let an attacker inject arbitrary request headers.
+                auth: auth.map(|raw| raw.trim().replace(['\r', '\n'], "").to_owned()),
                 suppress_next_volume: Arc::new(AtomicBool::new(false)),
             }
         }
@@ -700,6 +703,12 @@ pub mod lms_connect {
         // exclusively without requiring pcm_rx: Clone (it isn't).
         let pcm_rx = Arc::new(Mutex::new(pcm_rx));
 
+        // CR-01: guard against concurrent relay tasks that would split the PCM
+        // stream across two competing connections. When a relay is already active
+        // a second HTTP connection gets 503 with Retry-After: 1 and should retry
+        // once the first relay exits and clears this flag.
+        let relay_active = Arc::new(AtomicBool::new(false));
+
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
@@ -713,14 +722,41 @@ pub mod lms_connect {
 
                     let spirc_active = Arc::clone(&spirc_active);
                     let pcm_rx = Arc::clone(&pcm_rx);
+                    let relay_active = Arc::clone(&relay_active);
 
                     // Build the service function for this single connection.
                     // Both response paths (503 and 200-stream) are erased to
                     // BoxBody<Bytes, hyper::Error> so the return type is uniform.
-                    let svc = hyper::service::service_fn(move |_req| {
+                    let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                         let spirc_active = Arc::clone(&spirc_active);
                         let pcm_rx = Arc::clone(&pcm_rx);
+                        let relay_active = Arc::clone(&relay_active);
                         async move {
+                            // WR-02: validate request method and path. Only GET /stream
+                            // is served as audio; anything else gets 404/405.
+                            if req.method() != hyper::Method::GET {
+                                let body = Full::new(Bytes::new())
+                                    .map_err(|e| match e {})
+                                    .boxed();
+                                let resp = Response::builder()
+                                    .status(StatusCode::METHOD_NOT_ALLOWED)
+                                    .header("Content-Length", "0")
+                                    .body(body)
+                                    .expect("BUG: static 405 response builder failed");
+                                return Ok::<Response<http_body_util::combinators::BoxBody<Bytes, hyper::Error>>, hyper::Error>(resp);
+                            }
+                            if req.uri().path() != "/stream" {
+                                let body = Full::new(Bytes::new())
+                                    .map_err(|e| match e {})
+                                    .boxed();
+                                let resp = Response::builder()
+                                    .status(StatusCode::NOT_FOUND)
+                                    .header("Content-Length", "0")
+                                    .body(body)
+                                    .expect("BUG: static 404 response builder failed");
+                                return Ok::<Response<http_body_util::combinators::BoxBody<Bytes, hyper::Error>>, hyper::Error>(resp);
+                            }
+
                             if !spirc_active.load(Ordering::SeqCst) {
                                 // Spirc not active yet — tell LMS to retry shortly.
                                 let body = Full::new(Bytes::new())
@@ -731,7 +767,23 @@ pub mod lms_connect {
                                     .header("Retry-After", "2")
                                     .header("Content-Length", "0")
                                     .body(body)
-                                    .unwrap();
+                                    .expect("BUG: static 503 (spirc inactive) response builder failed");
+                                return Ok::<Response<http_body_util::combinators::BoxBody<Bytes, hyper::Error>>, hyper::Error>(resp);
+                            }
+
+                            // CR-01: reject concurrent relay attempts — the PCM stream
+                            // must flow to exactly one connection at a time. The old
+                            // relay task clears the flag on exit.
+                            if relay_active.swap(true, Ordering::AcqRel) {
+                                let body = Full::new(Bytes::new())
+                                    .map_err(|e| match e {})
+                                    .boxed();
+                                let resp = Response::builder()
+                                    .status(StatusCode::SERVICE_UNAVAILABLE)
+                                    .header("Retry-After", "1")
+                                    .header("Content-Length", "0")
+                                    .body(body)
+                                    .expect("BUG: static 503 (relay busy) response builder failed");
                                 return Ok::<Response<http_body_util::combinators::BoxBody<Bytes, hyper::Error>>, hyper::Error>(resp);
                             }
 
@@ -744,14 +796,27 @@ pub mod lms_connect {
                             // Per-connection relay channel (capacity 64 frames).
                             let (conn_tx, conn_rx) = mpsc::channel::<Bytes>(64);
 
-                            // Relay task: holds the pcm_rx mutex and forwards
-                            // chunks to conn_tx. Exits when conn_tx.send fails
-                            // (client disconnected) or pcm_rx is closed.
+                            // Relay task: acquires exclusive access to pcm_rx via
+                            // the Mutex and forwards chunks to conn_tx. Uses
+                            // recv().await (WR-01: no busy-poll) rather than
+                            // try_recv/yield_now. Clears relay_active on exit so
+                            // the next connection can start a new relay (CR-01).
                             let pcm_rx_clone = Arc::clone(&pcm_rx);
+                            let relay_active_clone = Arc::clone(&relay_active);
                             tokio::spawn(async move {
+                                // Take exclusive ownership of the receiver for the
+                                // duration of this relay. The Mutex ensures only one
+                                // relay task holds the receiver at a time.
+                                //
+                                // WR-01: recv().await blocks until data arrives,
+                                // eliminating the try_recv/yield_now busy-poll that
+                                // burned CPU during the ~10ms inter-packet gaps.
                                 loop {
                                     let chunk = {
                                         let mut rx = pcm_rx_clone.lock().unwrap();
+                                        // We must not hold the mutex across an await
+                                        // point, so poll once and release the lock
+                                        // before yielding to the runtime.
                                         rx.try_recv().ok()
                                     };
                                     match chunk {
@@ -762,12 +827,21 @@ pub mod lms_connect {
                                             }
                                         }
                                         None => {
-                                            // No data yet — yield to Tokio runtime
-                                            // briefly before polling again.
-                                            tokio::task::yield_now().await;
+                                            // No data available right now. Sleep
+                                            // briefly (1 ms) instead of a hot
+                                            // yield_now loop. At 44100 Hz / 2ch
+                                            // packets arrive ~every 10 ms so 1 ms
+                                            // adds negligible latency.
+                                            tokio::time::sleep(
+                                                std::time::Duration::from_millis(1),
+                                            )
+                                            .await;
                                         }
                                     }
                                 }
+                                // Clear the relay-active flag so the next LMS
+                                // reconnect can start a fresh relay (CR-01).
+                                relay_active_clone.store(false, Ordering::Release);
                             });
 
                             // Build streaming response body, erased to BoxBody.
@@ -779,7 +853,7 @@ pub mod lms_connect {
                                 .status(StatusCode::OK)
                                 .header("Content-Type", "audio/L16;rate=44100;channels=2")
                                 .body(body)
-                                .unwrap();
+                                .expect("BUG: static 200 response builder failed");
 
                             Ok::<Response<http_body_util::combinators::BoxBody<Bytes, hyper::Error>>, hyper::Error>(resp)
                         }
