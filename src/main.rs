@@ -1474,9 +1474,15 @@ async fn get_setup() -> Setup {
     )) {
         Some("librespot compiled without zeroconf backend".to_owned())
     } else if cfg!(feature = "spotty")
-        && (opt_present(SINGLE_TRACK) || opt_present(SAVE_TOKEN) || opt_present(GET_TOKEN))
+        && (opt_present(SINGLE_TRACK) || opt_present(SAVE_TOKEN) || opt_present(GET_TOKEN)
+            || opt_present(CONNECT_STREAM))
     {
-        Some("we don't need discovery in spotty mode".to_owned())
+        // WR-05: suppress Zeroconf in --connect-stream mode. The HTTP stream
+        // server is a tightly controlled Connect receiver managed by LMS;
+        // uncontrolled Zeroconf advertisement would allow Spotify apps on the LAN
+        // to discover the device independently, potentially creating a second
+        // Spirc instance that clobbers spirc_active.
+        Some("we don't need discovery in spotty connect-stream mode".to_owned())
     } else if opt_present(DISABLE_DISCOVERY) {
         Some(format!(
             "the `--{DISABLE_DISCOVERY}` / `-{DISABLE_DISCOVERY_SHORT}` flag set",
@@ -2183,6 +2189,17 @@ async fn main() {
 
     let setup = get_setup().await;
 
+    // WR-04: --authenticate and --connect-stream are mutually exclusive.
+    // --authenticate exits after saving credentials; --connect-stream starts
+    // the HTTP stream server and prints stream_port=N. Combining them causes
+    // the daemon to print stream_port=N, then immediately exit after "authorized",
+    // leaving LMS with a port that refuses connections.
+    #[cfg(feature = "lms-connect")]
+    if setup.authenticate && setup.connect_stream {
+        error!("--authenticate and --connect-stream are mutually exclusive");
+        exit(1);
+    }
+
     let mut last_credentials = None;
     let mut spirc: Option<Spirc> = None;
     let mut spirc_task: Option<Pin<_>> = None;
@@ -2415,6 +2432,26 @@ async fn main() {
         }
     }
 
+    // CR-03: Spawn a dedicated task that listens for PlayerEvent::SessionConnected
+    // and sets spirc_active=true only after the Spotify handshake completes —
+    // not immediately after Spirc::new returns. This prevents the HTTP stream
+    // server from returning 200 before audio is actually flowing.
+    // spirc_active=false paths (discovery replacement, spirc_task exit) remain
+    // in the main select! loop below because those are synchronous transitions
+    // that must happen before `connecting` is set.
+    #[cfg(feature = "lms-connect")]
+    if setup.connect_stream {
+        let mut session_event_chan = player.get_player_event_channel();
+        let spirc_active_clone = spirc_active.clone();
+        tokio::spawn(async move {
+            while let Some(event) = session_event_chan.recv().await {
+                if matches!(event, librespot_playback::player::PlayerEvent::SessionConnected { .. }) {
+                    spirc_active_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        });
+    }
+
     #[cfg(not(feature = "spotty"))]
     if let Some(player_event_program) = setup.player_event_program.clone() {
         _event_handler = Some(EventHandler::new(
@@ -2493,9 +2530,11 @@ async fn main() {
                 };
                 spirc = Some(spirc_);
                 spirc_task = Some(Box::pin(spirc_task_));
-                // Mark Spirc as active so http_stream_server serves 200 responses.
-                #[cfg(feature = "lms-connect")]
-                spirc_active.store(true, std::sync::atomic::Ordering::SeqCst);
+                // CR-03: spirc_active is set to true only after
+                // PlayerEvent::SessionConnected fires (see the dedicated task
+                // spawned above), not here. Setting it here would race with
+                // Spirc's initial Hello/Welcome handshake and allow LMS to
+                // connect before audio is flowing.
 
                 connecting = false;
             },
