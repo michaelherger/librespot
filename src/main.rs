@@ -2335,14 +2335,24 @@ async fn main() {
     #[cfg(feature = "lms-connect")]
     let spirc_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+    // flush_tx_for_lms is set to Some(flush_tx.clone()) when connect_stream is true
+    // so the LMS event dispatcher can fire seek-flush signals. It is None in
+    // headless mode (no HTTP relay to drain).
+    #[cfg(feature = "lms-connect")]
+    let flush_tx_for_lms: Option<tokio::sync::watch::Sender<u64>>;
+
     #[cfg(feature = "lms-connect")]
     let (player, pcm_rx_opt) = {
         let _ = backend; // keep `setup.backend` selection valid for non-feature builds
         if setup.connect_stream {
-            // HTTP streaming mode: create the PCM channel, wire HttpStreamSink,
-            // keep pcm_rx for http_stream_server spawning below.
+            // HTTP streaming mode: create the PCM channel + flush watch-channel,
+            // wire HttpStreamSink, keep pcm_rx/flush_rx for http_stream_server
+            // spawning below.
             let (pcm_tx, pcm_rx) =
                 tokio::sync::mpsc::channel::<bytes::Bytes>(256);
+            let (flush_tx, flush_rx) = tokio::sync::watch::channel::<u64>(0);
+            // Clone flush_tx for the LMS event dispatcher; sink holds the other copy.
+            flush_tx_for_lms = Some(flush_tx.clone());
             let player = Player::new(
                 player_config,
                 session.clone(),
@@ -2352,12 +2362,14 @@ async fn main() {
                         device.clone(),
                         format,
                         pcm_tx,
+                        flush_tx,
                     )
                 },
             );
-            (player, Some(pcm_rx))
+            (player, Some((pcm_rx, flush_rx)))
         } else {
             // Headless Connect mode: discard PCM, no HTTP server needed.
+            flush_tx_for_lms = None;
             let player = Player::new(
                 player_config,
                 session.clone(),
@@ -2369,7 +2381,7 @@ async fn main() {
                     )
                 },
             );
-            (player, None::<tokio::sync::mpsc::Receiver<bytes::Bytes>>)
+            (player, None::<(tokio::sync::mpsc::Receiver<bytes::Bytes>, tokio::sync::watch::Receiver<u64>)>)
         }
     };
 
@@ -2377,7 +2389,7 @@ async fn main() {
     // All within #[cfg(feature = "lms-connect")] and guarded by pcm_rx_opt.
     #[cfg(feature = "lms-connect")]
     let (http_shutdown_tx_opt, http_handle_opt) = {
-        if let Some(pcm_rx) = pcm_rx_opt {
+        if let Some((pcm_rx, flush_rx)) = pcm_rx_opt {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("Failed to bind HTTP stream port");
@@ -2400,6 +2412,7 @@ async fn main() {
                     pcm_rx,
                     spirc_active_clone,
                     http_shutdown_rx,
+                    flush_rx,
                 ),
             );
             (Some(http_shutdown_tx), Some(http_handle))
@@ -2414,12 +2427,15 @@ async fn main() {
 
     // Spawn the LMS PlayerEvent dispatcher loop. Requires --lms AND
     // --player-mac to be configured; otherwise no-op.
+    // Pass flush_tx_for_lms so the dispatcher can fire seek-flush signals on
+    // PlayerEvent::Seeked (Some when connect_stream is true, None otherwise).
     #[cfg(feature = "lms-connect")]
     {
         let lms = librespot::spotty::lms_connect::LMS::new(
             setup.lms.clone(),
             setup.player_mac.clone(),
             setup.lms_auth.clone(),
+            flush_tx_for_lms,
         );
         if lms.is_configured() {
             let mut event_chan = player.get_player_event_channel();
