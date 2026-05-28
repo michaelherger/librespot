@@ -61,7 +61,7 @@ const DEBUGMODE: bool = true;
 #[cfg(not(debug_assertions))]
 const DEBUGMODE: bool = false;
 
-pub const VERSION: &str = "2.1.0";
+pub const VERSION: &str = "2.2.0";
 
 pub fn check(version_info: String) {
     println!("ok {}", version_info);
@@ -198,7 +198,7 @@ pub async fn play_track(
 #[cfg(feature = "lms-connect")]
 pub mod lms_connect {
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::{Duration, Instant};
 
     use bytes::Bytes;
@@ -213,7 +213,7 @@ pub mod lms_connect {
     use serde_json::json;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, watch};
     use tokio_stream::wrappers::ReceiverStream;
 
     use librespot_playback::audio_backend::{Sink, SinkError, SinkResult};
@@ -243,6 +243,11 @@ pub mod lms_connect {
         pub player_mac: Option<String>,
         pub auth: Option<String>,
         pub suppress_next_volume: Arc<AtomicBool>,
+        /// Sender half of the watch channel used to signal the relay task to drain
+        /// pre-seek PCM bytes. Incremented on every `PlayerEvent::Seeked`.
+        pub flush_tx: Option<watch::Sender<u64>>,
+        /// Monotonically increasing generation counter; incremented on seek.
+        pub seek_gen: Arc<AtomicU64>,
     }
 
     impl LMS {
@@ -250,6 +255,7 @@ pub mod lms_connect {
             host_port: Option<String>,
             player_mac: Option<String>,
             auth: Option<String>,
+            flush_tx: Option<watch::Sender<u64>>,
         ) -> Self {
             Self {
                 host_port,
@@ -260,6 +266,8 @@ pub mod lms_connect {
                 // that would let an attacker inject arbitrary request headers.
                 auth: auth.map(|raw| raw.trim().replace(['\r', '\n'], "").to_owned()),
                 suppress_next_volume: Arc::new(AtomicBool::new(false)),
+                flush_tx,
+                seek_gen: Arc::new(AtomicU64::new(0)),
             }
         }
 
@@ -280,6 +288,11 @@ pub mod lms_connect {
                 // The wiring spawns a Tokio task that takes ownership of one
                 // clone; the suppression flag must remain a single shared cell.
                 suppress_next_volume: Arc::clone(&self.suppress_next_volume),
+                // flush_tx is not Clone (watch::Sender doesn't implement Clone),
+                // so clones do not hold a sender. Only the original LMS instance
+                // (the one passed to the event dispatcher) fires flush signals.
+                flush_tx: None,
+                seek_gen: Arc::clone(&self.seek_gen),
             }
         }
     }
@@ -356,10 +369,21 @@ pub mod lms_connect {
                 // Seeked: report position in seconds (3 decimals). Only valid
                 // mid-playback — without an active track, the seek vocabulary
                 // has no LMS-side referent.
+                // Also fires the watch-channel flush signal so the relay task
+                // drains pre-seek PCM bytes (D-03 in-place drain variant).
+                // Pitfall 5: only fire on Seeked, never on Playing (which also
+                // fires on resume) to avoid draining during gapless transitions.
                 PlayerEvent::Seeked { position_ms, .. } => {
                     if current_track.is_some() {
                         let secs = f64::from(*position_ms) / 1000.0;
                         self.notify("seek", &format!("{secs:.3}"), "").await;
+                    }
+                    // Fire flush regardless of whether a track is active: the
+                    // relay must drain even if current_track is not yet set.
+                    if let Some(tx) = &self.flush_tx {
+                        let new_gen = self.seek_gen.fetch_add(1, Ordering::Release) + 1;
+                        tx.send(new_gen).ok();
+                        info!("lms-connect: seek-flush signal sent (gen={})", new_gen);
                     }
                 }
 
@@ -556,6 +580,11 @@ pub mod lms_connect {
     /// here (BIN-03).
     pub struct HttpStreamSink {
         pcm_tx: mpsc::Sender<Bytes>,
+        /// Sender half of the flush watch-channel. Held here purely for ownership
+        /// (keeping the channel open); the actual flush signals are fired from
+        /// `LMS::handle_player_event` on `PlayerEvent::Seeked`.
+        #[allow(dead_code)]
+        flush_tx: watch::Sender<u64>,
         began_at: Instant,
         frames_consumed: u64,
     }
@@ -566,12 +595,16 @@ pub mod lms_connect {
         /// `pcm_tx` is the sending half of the channel that connects this sink
         /// (OS thread) to `http_stream_server` (Tokio task).
         ///
+        /// `flush_tx` is held for ownership only; flush signals are sent by
+        /// `LMS::handle_player_event` on `PlayerEvent::Seeked`.
+        ///
         /// Panics if `format != AudioFormat::S16` — only S16LE is supported
         /// (pitfall S-03: format continuity).
         pub fn open(
             _device: Option<String>,
             format: AudioFormat,
             pcm_tx: mpsc::Sender<Bytes>,
+            flush_tx: watch::Sender<u64>,
         ) -> Box<dyn Sink> {
             if format != AudioFormat::S16 {
                 panic!(
@@ -581,6 +614,7 @@ pub mod lms_connect {
             }
             Box::new(Self {
                 pcm_tx,
+                flush_tx,
                 began_at: Instant::now(),
                 frames_consumed: 0,
             })
@@ -705,6 +739,7 @@ pub mod lms_connect {
         pcm_rx: mpsc::Receiver<Bytes>,
         spirc_active: Arc<AtomicBool>,
         shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+        flush_rx: watch::Receiver<u64>,
     ) {
         use std::sync::Mutex;
 
@@ -715,6 +750,9 @@ pub mod lms_connect {
         // Wrap pcm_rx in Arc<Mutex> so the relay task can acquire it
         // exclusively without requiring pcm_rx: Clone (it isn't).
         let pcm_rx = Arc::new(Mutex::new(pcm_rx));
+
+        // Wrap flush_rx in Arc<Mutex> so it can be shared across connections.
+        let flush_rx = Arc::new(Mutex::new(flush_rx));
 
         // CR-01: guard against concurrent relay tasks that would split the PCM
         // stream across two competing connections. When a relay is already active
@@ -735,6 +773,7 @@ pub mod lms_connect {
 
                     let spirc_active = Arc::clone(&spirc_active);
                     let pcm_rx = Arc::clone(&pcm_rx);
+                    let flush_rx = Arc::clone(&flush_rx);
                     let relay_active = Arc::clone(&relay_active);
 
                     // Build the service function for this single connection.
@@ -743,6 +782,7 @@ pub mod lms_connect {
                     let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                         let spirc_active = Arc::clone(&spirc_active);
                         let pcm_rx = Arc::clone(&pcm_rx);
+                        let flush_rx = Arc::clone(&flush_rx);
                         let relay_active = Arc::clone(&relay_active);
                         async move {
                             // WR-02: validate request method and path. Only GET /stream
@@ -814,22 +854,60 @@ pub mod lms_connect {
                             // recv().await (WR-01: no busy-poll) rather than
                             // try_recv/yield_now. Clears relay_active on exit so
                             // the next connection can start a new relay (CR-01).
+                            //
+                            // At the top of each loop iteration, checks flush_rx
+                            // for a new seek generation. If one is found, drains
+                            // the pcm_rx of pre-seek bytes before forwarding
+                            // post-seek audio (in-place relay drain, Approach D).
                             let pcm_rx_clone = Arc::clone(&pcm_rx);
+                            let flush_rx_clone = Arc::clone(&flush_rx);
                             let relay_active_clone = Arc::clone(&relay_active);
                             tokio::spawn(async move {
                                 // Take exclusive ownership of the receiver for the
                                 // duration of this relay. The Mutex ensures only one
                                 // relay task holds the receiver at a time.
                                 //
-                                // WR-01: recv().await blocks until data arrives,
-                                // eliminating the try_recv/yield_now busy-poll that
-                                // burned CPU during the ~10ms inter-packet gaps.
+                                // Initialise last_seen_gen from the current value so
+                                // we don't drain on the very first iteration.
+                                let mut last_seen_gen: u64 = {
+                                    let rx = flush_rx_clone.lock().unwrap();
+                                    *rx.borrow()
+                                };
+
                                 loop {
+                                    // --- Seek-flush drain (top of loop, before read) ---
+                                    // Poll has_changed() without holding the mutex
+                                    // across an await point.
+                                    let flush_pending = {
+                                        let rx = flush_rx_clone.lock().unwrap();
+                                        rx.has_changed().unwrap_or(false)
+                                    };
+                                    if flush_pending {
+                                        let new_gen = {
+                                            let mut rx = flush_rx_clone.lock().unwrap();
+                                            *rx.borrow_and_update()
+                                        };
+                                        if new_gen > last_seen_gen {
+                                            // Drain all queued pre-seek PCM bytes.
+                                            let mut count: u64 = 0;
+                                            let mut rx = pcm_rx_clone.lock().unwrap();
+                                            while rx.try_recv().is_ok() {
+                                                count += 1;
+                                            }
+                                            last_seen_gen = new_gen;
+                                            info!(
+                                                "lms-connect: relay flushed {} pre-seek chunks (gen={})",
+                                                count, new_gen
+                                            );
+                                        }
+                                    }
+
+                                    // --- Normal relay ---
+                                    // WR-01: poll once and release the lock before
+                                    // yielding to the runtime (must not hold mutex
+                                    // across await point).
                                     let chunk = {
                                         let mut rx = pcm_rx_clone.lock().unwrap();
-                                        // We must not hold the mutex across an await
-                                        // point, so poll once and release the lock
-                                        // before yielding to the runtime.
                                         rx.try_recv().ok()
                                     };
                                     match chunk {
