@@ -248,6 +248,10 @@ pub mod lms_connect {
         pub flush_tx: Option<watch::Sender<u64>>,
         /// Monotonically increasing generation counter; incremented on seek.
         pub seek_gen: Arc<AtomicU64>,
+        /// Set after TrackChanged emits `start`; the next same-id `Playing`
+        /// event will send a `seek` notification with the actual position so
+        /// LMS can sync its progress bar for mid-song connects.
+        pub needs_position_sync: Arc<AtomicBool>,
     }
 
     impl LMS {
@@ -268,6 +272,7 @@ pub mod lms_connect {
                 suppress_next_volume: Arc::new(AtomicBool::new(false)),
                 flush_tx,
                 seek_gen: Arc::new(AtomicU64::new(0)),
+                needs_position_sync: Arc::new(AtomicBool::new(false)),
             }
         }
 
@@ -293,6 +298,7 @@ pub mod lms_connect {
                 // (the one passed to the event dispatcher) fires flush signals.
                 flush_tx: None,
                 seek_gen: Arc::clone(&self.seek_gen),
+                needs_position_sync: Arc::clone(&self.needs_position_sync),
             }
         }
     }
@@ -327,11 +333,23 @@ pub mod lms_connect {
                 // buffer-underrun re-emit. We emit `start` only on a clean
                 // None -> Some transition; same-id re-emits are no-ops, and
                 // a different id replaces the cursor with `change`.
-                PlayerEvent::Playing { track_id, .. } => {
+                // Exception: after TrackChanged sent `start`, the next same-id
+                // Playing carries position_ms — send it as `seek` so the Perl
+                // side can sync the progress bar for mid-song connects.
+                PlayerEvent::Playing { track_id, position_ms, .. } => {
                     let new_id = track_id.to_id().unwrap_or_default();
                     match current_track.as_deref() {
-                        Some(prev) if prev == new_id.as_str() => { /* noisy re-emit */ }
+                        Some(prev) if prev == new_id.as_str() => {
+                            if self.needs_position_sync.load(Ordering::Acquire) {
+                                self.needs_position_sync.store(false, Ordering::Release);
+                                let secs = f64::from(*position_ms) / 1000.0;
+                                if secs > 1.0 {
+                                    self.notify("seek", &format!("{secs:.3}"), "").await;
+                                }
+                            }
+                        }
                         Some(_) => {
+                            self.needs_position_sync.store(false, Ordering::Release);
                             let prev = current_track.replace(new_id.clone()).unwrap_or_default();
                             self.notify("change", &new_id, &prev).await;
                         }
@@ -403,10 +421,12 @@ pub mod lms_connect {
                     match current_track.as_deref() {
                         Some(prev) if prev == new_id.as_str() => { /* same track */ }
                         Some(_) => {
+                            self.needs_position_sync.store(false, Ordering::Release);
                             let prev = current_track.replace(new_id.clone()).unwrap_or_default();
                             self.notify("change", &new_id, &prev).await;
                         }
                         None => {
+                            self.needs_position_sync.store(true, Ordering::Release);
                             *current_track = Some(new_id.clone());
                             self.notify("start", &new_id, "").await;
                         }
