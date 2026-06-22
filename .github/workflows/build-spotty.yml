@@ -15,14 +15,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Write Build Configuration File
-      uses: DamianReeves/write-file-action@v1.3
-      with:
-        path: ./src/client_id.txt
-        contents: ${{ env.KEYMASTER_CLIENT_ID }}
-        write-mode: overwrite
+      uses: actions/checkout@v7
 
     - name: Install Rust support for x86_64 & prepare environment
       run: |
@@ -31,6 +24,7 @@ jobs:
 
     - name: Build
       run: |
+        echo ${{ env.KEYMASTER_CLIENT_ID }} > src/client_id.txt
         cargo build --target=x86_64-apple-darwin --release
         cargo build --target=aarch64-apple-darwin --release
 
@@ -42,7 +36,7 @@ jobs:
           -output releases/spotty
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: spotty-mac
         path: releases/
@@ -55,14 +49,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Write Build Configuration File
-      uses: DamianReeves/write-file-action@v1.3
-      with:
-        path: ./src/client_id.txt
-        contents: ${{ env.KEYMASTER_CLIENT_ID }}
-        write-mode: overwrite
+      uses: actions/checkout@v7
 
     - name: Prepare build environment
       run: |
@@ -71,6 +58,7 @@ jobs:
         mkdir -p releases/i386-linux
         mkdir -p releases/aarch64-linux
         mkdir -p releases/arm-linux
+        echo ${{ env.KEYMASTER_CLIENT_ID }} > src/client_id.txt
 
     - name: Build i686
       run: |
@@ -98,7 +86,7 @@ jobs:
         cp target/arm-unknown-linux-musleabi/release/spotty releases/arm-linux/spotty
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: spotty-linux
         path: releases/
@@ -108,20 +96,16 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Write Build Configuration File
-      uses: DamianReeves/write-file-action@v1.3
-      with:
-        path: ./src/client_id.txt
-        contents: ${{ env.KEYMASTER_CLIENT_ID }}
-        write-mode: overwrite
+      uses: actions/checkout@v7
 
     - name: Build
-      run: cargo build --release
+      shell: bash
+      run: |
+        echo ${{ env.KEYMASTER_CLIENT_ID }} > src/client_id.txt
+        cargo build --release
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: spotty.exe
         path: target/release/spotty.exe
