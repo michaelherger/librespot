@@ -180,7 +180,7 @@ Or to use rustls-tls with ALSA:
 cargo build --no-default-features --features "rustls-tls alsa-backend with-libmdns"
 ```
 
-### Compiling on Apple M1 for Apple x86_64 (or vice versa)
+### Compiling on Apple Silicon (M1+) for Apple x86_64
 
 Install the additional `x86_64-apple-darwin` target using rustup:
 
@@ -188,17 +188,13 @@ Install the additional `x86_64-apple-darwin` target using rustup:
 rustup target install x86_64-apple-darwin
 ```
 
-Then run the build with some additional environment variables:
+Then run the build with the additional target parameter:
 
 ```bash
-SDKROOT=$(xcrun -sdk macosx11.3 --show-sdk-path) \
-MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx11.3 --show-sdk-platform-version) \
 cargo build --target=x86_64-apple-darwin --release
 ```
 
-The `sdk` value can vary, depending on what XCode version you're using.
-
-You can then use the `lipo` tool to create a single fat binary for both platforms:
+You can then use the `lipo` tool to create a single fat (universal) binary for both platforms:
 
 ```bash
 lipo -create \
