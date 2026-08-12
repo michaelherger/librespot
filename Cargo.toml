@@ -134,7 +134,7 @@ with-dns-sd = ["librespot-discovery/with-dns-sd"]
 passthrough-decoder = ["librespot-playback/passthrough-decoder"]
 
 # Build Spotty helper for the Spotty plugin for LMS (http://github.com/michaelherger/Spotty-Plugin)
-spotty = ["librespot-discovery/spotty", "librespot-playback/spotty"]
+spotty = ["librespot-playback/spotty"]
 
 [lib]
 name = "librespot"
