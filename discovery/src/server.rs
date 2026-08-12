@@ -281,30 +281,24 @@ impl DiscoveryServer {
         event_tx: mpsc::UnboundedSender<DiscoveryEvent>,
     ) -> Result<Self, Error> {
         let discovery = RequestHandler::new(config, event_tx);
-        let address = if cfg!(any(
-            windows,
-            all(
-                feature = "spotty",
-                target_os = "linux",
-                target_env = "musl",
-                any(target_arch = "arm", target_arch = "aarch64")
-            )
-        )) {
-            SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port)
+        let ipv4_address = SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), *port);
+        let listener = if cfg!(windows) {
+            TcpListener::bind(ipv4_address)
         } else {
-            // this creates a dual stack socket on non-windows systems
-            SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), *port)
+            // This creates a dual-stack socket when the platform supports it.
+            let ipv6_address = SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), *port);
+            TcpListener::bind(ipv6_address).or_else(|_| TcpListener::bind(ipv4_address))
         };
 
-        let (close_tx, close_rx) = oneshot::channel();
-
-        let listener = match TcpListener::bind(address) {
+        let listener = match listener {
             Ok(listener) => listener,
             Err(e) => {
                 warn!("Discovery server failed to start: {e}");
                 return Err(e.into());
             }
         };
+
+        let (close_tx, close_rx) = oneshot::channel();
 
         listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(listener)?;

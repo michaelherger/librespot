@@ -28,13 +28,13 @@ jobs:
     - name: Build
       run: |
         echo ${{ env.KEYMASTER_CLIENT_ID }} > src/client_id.txt
-        ./cross build --release --target=${{ github.event.inputs.target_triple }} --no-default-features --features default-linux
+        ./cross build --target=${{ github.event.inputs.target_triple }} --no-default-features --features default-linux
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v7
       with:
         name: spotty-custom
-        path: target/${{ github.event.inputs.target_triple }}/release/spotty
+        path: target/${{ github.event.inputs.target_triple }}/debug/spotty
 
     - run: |
         echo 'Build succeeded for `${{ github.event.inputs.target_triple }}`' >> $GITHUB_STEP_SUMMARY
