@@ -31,9 +31,9 @@ on:
         "!LICENSE",
         "!*.sh",
       ]
-  schedule:
-    # Run CI every week
-    - cron: "00 01 * * 0"
+  # schedule:
+  #   # Run CI every week
+  #   - cron: "00 01 * * 0"
 
 env:
   RUST_BACKTRACE: 1
