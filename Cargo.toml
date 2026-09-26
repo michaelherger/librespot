@@ -184,6 +184,8 @@ tokio = { version = "1", features = [
     "signal",
     "sync",
     "process",
+    "net",
+    "io-util",
 ] }
 url = "2.2"
 
